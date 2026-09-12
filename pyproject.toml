@@ -1,0 +1,27 @@
+[project]
+name = "be-shell-python"
+version = "0.1.0"
+description = "Python 外壳的启动器（阶段四），不是 brickKit 组件、不进 brickkit.yaml"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "besdk @ git+https://github.com/brickKit/be-sdk-python.git@v0.3.3",
+    "yoyo-migrations==9.0.0",
+    "psycopg2-binary==2.9.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.4.1",
+    "pytest-asyncio==1.2.0",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["shell*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
