@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -93,6 +94,42 @@ class _Built:
     mod: "Module"
 
 
+def _export_dependency_endpoints(modules: list[ModuleSpec]) -> None:
+    """把每个模块 ``env`` 里以 ``_ENDPOINT`` 结尾的 key 真的 ``os.environ``
+    进外壳自己的进程环境。
+
+    ⚠️ 同 ``be-shell-go`` 阶段四 Task 9 真机撞到的同一个 bug（Go/Python
+    两边 ``endpoint()``/``Endpoint()`` 的实现逐字对应，判断也一样）：
+    ``besdk.endpoint()``（``SystemClient``/``UserClient`` 内部都靠它）读
+    的是 ``os.environ``，不是 ``rt.config``——``ModuleSpec.env`` 只喂进了
+    ``rt.config``（``new_shell_runtime`` 的既有设计），从未真的写进
+    进程环境。不补上这一步，任何调用 ``besdk.SystemClient``/``UserClient``
+    的代码路径在合并态下都会报"地址未注入"，即使 ``rt.config`` 里其实有
+    这份数据。本仓库目前唯一的模块（``infra-print``）没有任何依赖边，
+    不会真的触发这条路径，但判断必须跟 ``be-shell-go`` 保持一致——
+    真的有第二个 Python 组件加入 ``py-render`` 且带依赖边时，这里必须
+    已经是对的，不能等到那时候才现踩一遍同一个坑。
+
+    同一个 key 在同一个外壳的不同模块 ``env`` 里出现时，值理应完全一致
+    （决定它的只有"我的外壳、对方的外壳"这对关系，produce 7 的改写逻辑
+    保证这一点）——这里不假设这条不变式必然成立，真的发现不一致就报错，
+    不悄悄用后一个值覆盖前一个。
+    """
+    seen: dict[str, str] = {}
+    for spec in modules:
+        for key, value in spec.env.items():
+            if not key.endswith("_ENDPOINT"):
+                continue
+            existing = seen.get(key)
+            if existing is not None and existing != value:
+                raise RuntimeError(
+                    f"模块 {spec.component_id} 的 {key}={value!r} 与已经看到的 {existing!r} 不一致"
+                    "（同一个外壳内不同模块看到的同一个依赖地址不该不一样，检查产出 7 的改写逻辑）"
+                )
+            seen[key] = value
+            os.environ[key] = value
+
+
 async def run(cfg: Config, stop_event: asyncio.Event | None = None) -> None:
     """装配整个外壳：``bootstrap`` 一次 → 开一个共享连接池/NATS 连接 →
     ``init_shell_authz`` 一次 → 逐个模块调 ``new_module`` → 按同一顺序
@@ -108,6 +145,8 @@ async def run(cfg: Config, stop_event: asyncio.Event | None = None) -> None:
         stop_event = asyncio.Event()
 
     logger = logging.getLogger(cfg.shell_name)
+
+    _export_dependency_endpoints(cfg.modules)
 
     shutdown_otel = await besdk.bootstrap(cfg.shell_name, cfg.otel_base_url)
 
