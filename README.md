@@ -59,6 +59,14 @@ Python 外壳的启动器：把 N 个组件模块（各自的 `Module`）装进�
   环境假设。真的有第二个 Python 组件加入 `py-render` 时，"migrations 目录直接
   放 CWD 根"这个做法会撞车，先读 `shell/run.py` 顶部的完整说明。
 
+## 现状补充（阶段四 Task 9 完成，2026-09-13）
+
+`shell/run.py` 的 `run()` 新增 `_export_dependency_endpoints`：把每个模块 `env` 里 `_ENDPOINT`
+结尾的 key 真的写进 `os.environ`——同 `be-shell-go` 阶段四 Task 9 真机撞到的同一个 bug
+（`besdk.endpoint()` 读的是 `os.environ`，不是 `rt.config`，两边实现逐字对应）。本仓库目前唯一的
+模块（`infra-print`）没有任何依赖边，不会真的触发这条路径，但判断必须跟 `be-shell-go` 保持一致。
+完整根因分析见 `be-shell-go` 的 README 或父仓库 `docs/plans/04-阶段四-做外壳验拆回.md` Task 9。
+
 ## 现状补充（阶段四 Task 8 完成，2026-09-13）
 
 Task 7 验证阶段那个手动 `docker run` 起的容器，已经换成真正的
