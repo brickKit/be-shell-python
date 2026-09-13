@@ -8,6 +8,14 @@ dependencies = [
     "besdk @ git+https://github.com/brickKit/be-sdk-python.git@v0.3.3",
     "yoyo-migrations==9.0.0",
     "psycopg2-binary==2.9.10",
+    # 阶段四 Task 7：本仓库唯一真实要装的 Python 组件。infra-print 自己的
+    # 顶层包名字面量是 "app"（backend/pyproject.toml 的既有约定，见它自己
+    # AGENTS.md 的坑清单）——本仓库目前只装这一个 Python 模块，不会撞见
+    # 包名冲突；真的有第二个 Python 组件加入 py-render 时，这是第一个
+    # 要重新核对的地方。v1.0.5：infra-print 自己的 besdk 依赖从 v0.3.1
+    # 升到 v0.3.3，跟本仓库对齐（两边 git URL 依赖里的 besdk tag 必须
+    # 完全一致，pip/uv 才能解析出一份，见这次真机撞到的冲突）。
+    "infra-print @ git+https://github.com/brickKit/infra-print.git@v1.0.5",
 ]
 
 [project.optional-dependencies]

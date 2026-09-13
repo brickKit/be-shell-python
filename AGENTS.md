@@ -7,7 +7,7 @@
 | 仓库名 | `be-shell-python` |
 | 目录 | `shells/python/`（不进 `brickkit.yaml`，不是 brickKit 组件） |
 | 语言 / 框架 | Python 3.12；只依赖 `besdk`（be-sdk-python）、`yoyo-migrations`、`asyncpg`、`nats-py` |
-| 装的模块 | 阶段四：1 个 Python 组件（`infra-print`）——现状（Task 3 骨架）还没有真实装进，见 `README.md` 待办 |
+| 装的模块 | 阶段四：1 个 Python 组件（`infra-print`）——已经真机装进、迁移/健康检查/路由全部验证过，`brickkit.yaml` 也已真机原子式切换成 `local: true`，见 `README.md` |
 | 设计真相源 | 《BrickEnterprise 设计书.md》第 13 章（为什么、七条铁律、代价）+ `docs/plans/04-阶段四-做外壳验拆回.md`（本仓库具体要做什么）+ `docs/design/_调研记录/04-阶段四.md`（技术判断的推演过程）+ `shells/go/AGENTS.md`（Go 版对应仓库，判断逻辑逐一对应）——本文件与它们冲突时，以那些为准 |
 
 ## 这个仓库存在的唯一理由
@@ -42,16 +42,29 @@ FIRST_COMPLETED)` + 手动 `stop_event.set()` + 对 pending 任务 `.cancel()`�
 - `Module.migrations_dir` 是相对 CWD 的 `Path`，不是 Go 版那种编译进二进制的
   `fs.FS`——本阶段只装 1 个 Python 模块，不会撞见"两个模块的相对路径解析到同一个
   CWD"这个问题；真的有第二个 Python 组件时，先读 `shell/run.py` 顶部的完整说明，
-  不要凭直觉假设现在这份实现直接够用。
-- `Config` 的连接串/权限判定地址/每个 `ModuleSpec.env` 目前只能靠 `main.py`
-  手写或读裸环境变量——`be-ops` 产出 4/7 落地后要换成读生成产物，不是继续手写。
-- `health_port` 目前默认写死——`be-ops` 产出 8（`shell-compose.yml`）落地后由
-  那一步决定这个端口该是多少。
+  不要凭直觉假设现在这份实现直接够用。`infra-print` 的 `migrations/` 目录本身
+  也不是它 Python 包的一部分，`Dockerfile`/测试都靠单独 `git clone` 一次对应
+  tag 来拿这份目录，见 `README.md`"踩到的真实坑"一节。
+- `main.py` 已经接上 `be-ops` 产出 4/7（`SHELL_CONFIG_JSON`/`SHELL_ENV_JSON`
+  两个环境变量指向的 JSON 文件），不再手写 `Config`/`ModuleSpec`——这两个文件
+  目前是真机验证时手动 `docker run -v` 挂载进容器的，Task 8 的 `shell-compose.yml`
+  落地后由那一步决定怎么生成/挂载，`main.py` 不需要因为编排方式改变而改代码。
+- `health_port` 目前默认写死——Task 8 的 `be-ops` 产出 8（`shell-compose.yml`）
+  落地后由那一步决定这个端口该是多少（阶段四 Task 7 真机验证时手动 `docker run`
+  传的也是这个默认值）。
 
 ## 测试
 
-`shell/run.py` 的测试全部用假模块（`tests/test_run.py`），不依赖任何真实组件
+`shell/run.py` 的骨架测试用假模块（`tests/test_run.py`），不依赖任何真实组件
 仓库——外壳骨架测的是"装配机制本身对不对"，不是"某个具体组件对不对"。需要真实
 可达的 `TEST_PG_DSN`（同 `besdk` 既有判据未设置就跳过）——`asyncpg.create_pool`
 默认会真的建立连接，不是懒加载；`TEST_NATS_URL` 可选，默认
 `nats://127.0.0.1:4222`。
+
+`tests/test_real_module.py` 额外真的装了 `infra-print`（真实、未经任何修改的
+组件模块），需要同一个 `TEST_PG_DSN`/`TEST_NATS_URL`，外加真实网络访问
+（`git clone` 对应 tag 拿 `migrations/` 目录，见 `README.md`"踩到的真实坑"
+一节）——本仓库的依赖本来就是 git+https 形式，运行测试环境已经假设了这条网络
+访问路径存在，不是新增的前提。`tests/test_main.py` 测 `main._build_modules`
+这一层装配逻辑本身（按外壳挑模块、外壳不存在/未切换时报错），不需要真实
+基础设施，同 `be-shell-go` 的 `cmd/shell/main_test.go`。
