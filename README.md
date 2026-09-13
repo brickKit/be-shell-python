@@ -59,4 +59,18 @@ Python 外壳的启动器：把 N 个组件模块（各自的 `Module`）装进�
   环境假设。真的有第二个 Python 组件加入 `py-render` 时，"migrations 目录直接
   放 CWD 根"这个做法会撞车，先读 `shell/run.py` 顶部的完整说明。
 
+## 现状补充（阶段四 Task 8 完成，2026-09-13）
+
+Task 7 验证阶段那个手动 `docker run` 起的容器，已经换成真正的
+`infra/shell-compose.yml`（父仓库根目录）——接上了健康检查、`be-net`、
+`SHELL_CONFIG_JSON`/`SHELL_ENV_JSON` 的自动生成与挂载（父仓库
+`make shell-gen`/`make shell-up`）。⚠️ **真机撞到的坑**：健康检查最初写的
+是 `wget --spider`（HEAD 请求），FastAPI 的 `@app.get("/")` 默认不支持
+HEAD，返回 405 被 `wget` 判定成"链接不存在"（退出码 8），容器因此被
+Docker 判定成 unhealthy——即使进程本身完全正常、`GET` 请求真的能拿到
+`{"ok":true}`。Go 侧的 `internal/shell` 健康检查是裸 `http.HandlerFunc`
+（不区分方法），一直没暴露这个问题，只有 Python 侧的 FastAPI 路由才踩到。
+改成普通 `GET`（`wget -q -O /dev/null`）后两边行为一致。完整细节见父仓库
+`docs/plans/04-阶段四-做外壳验拆回.md` Task 8。
+
 完整任务清单见父仓库 `docs/plans/04-阶段四-做外壳验拆回.md`。

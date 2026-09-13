@@ -46,12 +46,16 @@ FIRST_COMPLETED)` + 手动 `stop_event.set()` + 对 pending 任务 `.cancel()`�
   也不是它 Python 包的一部分，`Dockerfile`/测试都靠单独 `git clone` 一次对应
   tag 来拿这份目录，见 `README.md`"踩到的真实坑"一节。
 - `main.py` 已经接上 `be-ops` 产出 4/7（`SHELL_CONFIG_JSON`/`SHELL_ENV_JSON`
-  两个环境变量指向的 JSON 文件），不再手写 `Config`/`ModuleSpec`——这两个文件
-  目前是真机验证时手动 `docker run -v` 挂载进容器的，Task 8 的 `shell-compose.yml`
-  落地后由那一步决定怎么生成/挂载，`main.py` 不需要因为编排方式改变而改代码。
-- `health_port` 目前默认写死——Task 8 的 `be-ops` 产出 8（`shell-compose.yml`）
-  落地后由那一步决定这个端口该是多少（阶段四 Task 7 真机验证时手动 `docker run`
-  传的也是这个默认值）。
+  两个环境变量指向的 JSON 文件），不再手写 `Config`/`ModuleSpec`——现在由父
+  仓库根目录的 `infra/shell-compose.yml` 挂载（`make shell-up` 会先
+  `make shell-gen` 重新生成两份 JSON），Task 8 已完成，不再是 Task 6/7 阶段
+  手动 `docker run -v` 的临时状态。
+- ⚠️ **真机踩到的坑**：健康检查命令最初写的是 `wget --spider`（HEAD 请求），
+  FastAPI 的 `@app.get("/")` 默认不支持 HEAD，返回 405 被 `wget` 判定成链接
+  不存在（退出码 8），容器因此被 Docker 判定成 unhealthy——即使进程完全正常、
+  `GET` 请求真的能拿到 `{"ok":true}`。改成普通 `GET`（`wget -q -O /dev/null`）
+  解决，见 `infra/shell-compose.yml`。Go 侧的健康检查是裸 `http.HandlerFunc`
+  （不区分方法），没有这个问题，但两边判据要保持一致。
 
 ## 测试
 
