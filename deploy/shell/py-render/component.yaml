@@ -1,0 +1,59 @@
+apiVersion: brickkit/v1
+kind: Component
+
+metadata:
+  id: shell/py-render
+  name: Python 外壳（打印渲染域）
+  version: 0.2.4                     # 直接复用 be-shell-python 这个 git 仓库自己的 tag，
+                                      # 镜像就是这个 tag 构建出来的（shells/python/Makefile
+                                      # 的 image 目标），两者天生一致
+  description: 把 infra/print 合并进一个进程——本身不含任何业务逻辑，纯装配（设计书第 13 章）
+  license: Apache-2.0
+  vendor: brickKit
+
+tags: [shell, python]
+
+dependencies:
+  components: []
+  resources:
+    - { kind: database, engine: postgresql }
+    - { kind: mq,       engine: nats }
+
+configSchema:
+  type: object
+  properties:
+    shellName:                        # → SHELL_NAME，main.py 用它从 shell-config.json
+                                       # 里挑出自己要装的那个外壳；目前只有 py-render
+                                       # 一个实例，给了默认值，brickkit.yaml 仍显式写一遍
+                                       # 保持跟三个 Go 外壳同样的写法，不搞特殊
+      type: string
+      default: py-render
+    shellHealthPort:                  # → SHELL_HEALTH_PORT，值须与下面 deployment.port
+                                       # 相同，同 be-shell-go 三个外壳的判据
+      type: string
+      default: "8402"
+    otelBaseUrl:
+      type: string
+      default: ""
+    iamJwksUrl:
+      type: string
+    authzBundleUrl:
+      type: string
+
+deployment:
+  type: container
+  image: brickenterprise/be-shell-python:0.2.4
+  port: 8402                         # registry/ports.tsv，_shell-py-render 行
+  labels:                            # 同 be-shell-go 三个外壳：成员自己的
+                                      # prometheus.io/port 已删掉，合并后指标只走外壳
+                                      # 这一个共享端口
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8402"
+    prometheus.io/path: "/metrics"
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+
+healthCheck:
+  type: http
+  path: /healthz
+  startPeriodSeconds: 300
