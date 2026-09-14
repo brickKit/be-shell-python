@@ -18,14 +18,15 @@ Python 外壳的启动器：把 N 个组件模块（各自的 `Module`）装进�
   `stop_event`，等它被 set 之后自己优雅退出"，`Module.start` 的既有约定则是
   "取消时必须返回"，两种停止方式混着用，`run_standalone` 早就用前者的编排方式
   解决了，外壳只是把"1 个模块的任务集合"换成"N 个模块的任务集合拼在一起"。
-- `main.py`：进程入口，已经接上 `be-ops` 产出 4（`SHELL_CONFIG_JSON`）——按
-  `SHELL_NAME` 挑出自己要装的外壳，再按平台原生注入的 `BRICKKIT_SERVED_MEMBERS`
-  筛出这次真的被 `servedBy` 收编、活着的成员（阶段四附加 Task 0.2/0.3 起——原来
-  还需要单独一份 `SHELL_ENV_JSON` 才能拿到每个模块自己的 `env`，已并入
-  `SHELL_CONFIG_JSON` 的 `config` 字段，见下方"现状补充"），`_MODULE_REGISTRY`
-  是本仓库唯一"componentId 字符串 → 真实 Python 源码 import"的静态映射（同
-  `be-shell-go` 的 `moduleRegistry`，判断逐一对应）。本仓库目前只对应 1 个外壳
-  实例（`py-render`，唯一成员 `infra/print`）。
+- `main.py`：进程入口，已经接上 `be-ops` 产出 4——`SHELL_CONFIG_JSON` 环境变量的
+  内容直接是这一个外壳自己的 `modules` 数组（阶段四附加 Task 0.4 起，见下方
+  "现状补充"：servedBy 外壳没有 volumes 可以挂载文件，值就是
+  `be-ops shell-config --shell py-render` 打印出来的那一行，写死在
+  `brickkit.yaml` 的 configSchema 字符串里），再按平台原生注入的
+  `BRICKKIT_SERVED_MEMBERS` 筛出这次真的被 `servedBy` 收编、活着的成员，
+  `_MODULE_REGISTRY` 是本仓库唯一"componentId 字符串 → 真实 Python 源码 import"
+  的静态映射（同 `be-shell-go` 的 `moduleRegistry`，判断逐一对应）。本仓库目前
+  只对应 1 个外壳实例（`py-render`，唯一成员 `infra/print`）。
 - 已用假模块验证过骨架本身（`tests/test_run.py`）：多模块共享 db/nats 但各自
   独立字段、外壳自己的 `health_port` 独立于任何模块响应、单模块 `start()` 里的
   异常被干净地记录下来（带 `module_component_id`）且不会让整个进程崩溃、
@@ -86,6 +87,16 @@ brickKit 新增了 `servedBy` 机制之后，上面 Task 9 那条 `_export_depen
 版本化服务名）筛一遍，判断逐一对应 `be-shell-go` 的 `buildModules`。每个模块自己的 `configSchema`
 解析结果（原来 `SHELL_ENV_JSON` 的 `env` 字段）也一并挪进了 `SHELL_CONFIG_JSON` 新增的 `config` 字段
 （`be-ops` 侧的完整调研过程见装配仓库 `docs/plans/04b-验证记录.md` Task 0.2）。
+
+## 现状补充（阶段四附加 Task 0.4 完成，2026-09-15）——SHELL_CONFIG_JSON 从"文件路径"改成"内容本身"
+
+判断逐一对应 `be-shell-go` 同一次改动：真机把 `brickkit.yaml` 全量切到真实 `servedBy` 后，外壳容器
+crash-loop（`SHELL_CONFIG_JSON` 未设置）——根因是 brickKit 的 manifest 模型没有 `volumes` 字段，
+"文件路径 + 挂载卷"这条路走不通。改成环境变量的值直接是 `be-ops shell-config --shell py-render`
+打印出的、这一个外壳自己的 `modules` 数组（compact JSON），跟 `infra/authz` 的 `permissionCatalog`
+是同一种模式，写死在 `brickkit.yaml` 的 `config.shellConfigJson` 里。`_build_modules` 因此不再接收
+`shell_name` 参数——内容从生成的那一刻起就已经只属于这一个外壳。完整过程与真机复核结果见装配仓库
+`docs/plans/04b-验证记录.md` Task 0.4。
 
 ## 现状补充（阶段四 Task 8 完成，2026-09-13）
 

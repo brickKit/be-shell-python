@@ -17,6 +17,17 @@ import 系统没有编译期强制，但判断与 Go 版一致：具体要跑哪
 （``SHELL_ENV_JSON``）拿每个模块自己的 env——servedBy 落地后这份数据并
 进了产出 4 的 ``config`` 字段，``SHELL_ENV_JSON`` 整个退休。完整调研
 过程见装配仓库 ``docs/plans/04b-验证记录.md`` Task 0.2。
+
+⚠️ 阶段四附加 Task 0.4：``SHELL_CONFIG_JSON`` 从"文件路径"改成了"内容
+本身"——servedBy 外壳没有自己的 component.yaml 之外的任何东西可以挂载
+（brickKit 的 manifest 模型没有 volumes 字段），"文件路径 + 挂载卷"这
+条路在没有 volumes 的世界里走不通。现在这个环境变量的值直接是
+``be-ops shell-config --shell py-render`` 打印出的、这一个外壳自己的
+modules 数组（compact JSON），跟 infra/authz 的 permissionCatalog 是
+同一种模式——写死在 brickkit.yaml 该外壳组件的 config.shellConfigJson
+里，源头数据变了就重新跑一次那条命令、手动贴回去。也因此不再需要
+"按 SHELL_NAME 挑外壳"这一步——内容从生成的那一刻起就已经只属于这一个
+外壳。
 """
 
 from __future__ import annotations
@@ -50,11 +61,6 @@ def _register_known_modules() -> None:
     from app.module import create_module as infra_print_create_module
 
     _MODULE_REGISTRY["infra/print"] = infra_print_create_module
-
-
-def _load_json(path: str) -> list[dict]:
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
 
 
 _VERSIONED_NAME_RE_CHARS = str.maketrans({"/": "-", ".": "-"})
@@ -92,26 +98,29 @@ def _served_member_set() -> set[str]:
     return {name.strip() for name in raw.split(",")}
 
 
-def _build_modules(shell_name: str) -> list[ModuleSpec]:
-    config_path = os.environ.get("SHELL_CONFIG_JSON")
-    if not config_path:
-        raise RuntimeError("SHELL_CONFIG_JSON 未设置（be-ops shell-config 的产出路径）")
+def _build_modules() -> list[ModuleSpec]:
+    raw = os.environ.get("SHELL_CONFIG_JSON")
+    if not raw:
+        raise RuntimeError(
+            "SHELL_CONFIG_JSON 未设置（be-ops shell-config --shell <name> 的产出，"
+            "应该是这个外壳自己的 modules 数组）"
+        )
     served = _served_member_set()
 
-    config_shells = _load_json(config_path)
-    config_shell = next((s for s in config_shells if s["name"] == shell_name), None)
-    if config_shell is None:
-        raise RuntimeError(f"shell-config.json 里没有外壳 {shell_name!r}（是不是 SHELL_NAME 拼错了）")
+    try:
+        modules = json.loads(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"解析 SHELL_CONFIG_JSON 失败: {exc}") from exc
 
     _register_known_modules()
 
     matched: set[str] = set()
     specs: list[ModuleSpec] = []
-    for m in config_shell["modules"]:
+    for m in modules:
         component_id = m["componentId"]
         name = _versioned_service_name(component_id, m["version"])
         if name not in served:
-            # shell-config.json 列的是"这个外壳理论上有哪些成员"，不是
+            # SHELL_CONFIG_JSON 列的是"这个外壳理论上有哪些成员"，不是
             # "这次都被收编了"——没在 BRICKKIT_SERVED_MEMBERS 里的成员
             # 这次没被平台收编，正常跳过，不是错误。
             continue
@@ -119,7 +128,7 @@ def _build_modules(shell_name: str) -> list[ModuleSpec]:
         new_module = _MODULE_REGISTRY.get(component_id)
         if new_module is None:
             raise RuntimeError(
-                f"组件 {component_id} 在 shell-config.json 里，但 _MODULE_REGISTRY 没有登记它的真实 create_module——是不是漏了给它加 import"
+                f"组件 {component_id} 在 SHELL_CONFIG_JSON 里，但 _MODULE_REGISTRY 没有登记它的真实 create_module——是不是漏了给它加 import"
             )
         specs.append(
             ModuleSpec(
@@ -136,8 +145,8 @@ def _build_modules(shell_name: str) -> list[ModuleSpec]:
     missing = served - matched
     if missing:
         raise RuntimeError(
-            f"BRICKKIT_SERVED_MEMBERS 里有 shell-config.json 找不到的成员：{sorted(missing)}"
-            "（是不是 brickkit.yaml 改完之后忘了重新跑 be-ops shell-config）"
+            f"BRICKKIT_SERVED_MEMBERS 里有 SHELL_CONFIG_JSON 找不到的成员：{sorted(missing)}"
+            "（是不是 brickkit.yaml 改完之后忘了重新跑 be-ops shell-config --shell 把新字符串贴回 config.shellConfigJson）"
         )
     return specs
 
@@ -152,7 +161,7 @@ async def _main() -> None:
     if not shell_name:
         raise RuntimeError("SHELL_NAME 未设置（py-render，见 shell-compose.yml）")
 
-    modules = _build_modules(shell_name)
+    modules = _build_modules()
 
     pg_dsn = besdk.build_pg_dsn("be-shell-python-" + shell_name)
 

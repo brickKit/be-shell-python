@@ -7,7 +7,7 @@
 | 仓库名 | `be-shell-python` |
 | 目录 | `shells/python/`（不进 `brickkit.yaml`，不是 brickKit 组件） |
 | 语言 / 框架 | Python 3.12；只依赖 `besdk`（be-sdk-python）、`yoyo-migrations`、`asyncpg`、`nats-py` |
-| 装的模块 | 阶段四：1 个 Python 组件（`infra-print`）——已经真机装进、迁移/健康检查/路由全部验证过，`brickkit.yaml` 也已真机原子式切换成 `local: true`，见 `README.md` |
+| 装的模块 | 阶段四：1 个 Python 组件（`infra-print`）——已经真机装进、迁移/健康检查/路由全部验证过；`brickkit.yaml` 已从 `local: true` 全量切到真实 `servedBy`（阶段四附加 Task 0.4，外壳本身也是真实 brickKit 组件，见 `shells/python/deploy/shell/py-render/component.yaml`），见 `README.md` |
 | 设计真相源 | 《BrickEnterprise 设计书.md》第 13 章（为什么、七条铁律、代价）+ `docs/plans/04-阶段四-做外壳验拆回.md`（本仓库具体要做什么）+ `docs/design/_调研记录/04-阶段四.md`（技术判断的推演过程）+ `shells/go/AGENTS.md`（Go 版对应仓库，判断逻辑逐一对应）——本文件与它们冲突时，以那些为准 |
 
 ## 这个仓库存在的唯一理由
@@ -45,12 +45,13 @@ FIRST_COMPLETED)` + 手动 `stop_event.set()` + 对 pending 任务 `.cancel()`�
   不要凭直觉假设现在这份实现直接够用。`infra-print` 的 `migrations/` 目录本身
   也不是它 Python 包的一部分，`Dockerfile`/测试都靠单独 `git clone` 一次对应
   tag 来拿这份目录，见 `README.md`"踩到的真实坑"一节。
-- `main.py` 已经接上 `be-ops` 产出 4（`SHELL_CONFIG_JSON` 环境变量指向的
-  JSON 文件，阶段四附加 Task 0.2 起同时携带每个模块自己的 `configSchema`
-  解析结果），不再手写 `Config`/`ModuleSpec`；再按平台原生注入的
-  `BRICKKIT_SERVED_MEMBERS` 筛出这次真的被 `servedBy` 收编的成员。原来还
-  需要的 `SHELL_ENV_JSON`（产出 7）已退休，见 `README.md`"现状补充（阶段
-  四附加 Task 0.2/0.3 完成）"一节。
+- `main.py` 已经接上 `be-ops` 产出 4——`SHELL_CONFIG_JSON` 环境变量的内容
+  直接是这个外壳自己的 modules 数组（`be-ops shell-config --shell py-render`
+  打印出来的那一行，写死在 `brickkit.yaml` 的 configSchema 字符串里，
+  没有挂载任何文件，阶段四附加 Task 0.4——brickKit 的 manifest 模型没有
+  volumes 字段），不再手写 `Config`/`ModuleSpec`；再按平台原生注入的
+  `BRICKKIT_SERVED_MEMBERS` 筛出这次真的被 `servedBy` 收编的成员。见
+  `README.md`"现状补充（阶段四附加 Task 0.2/0.3、0.4 完成）"两节。
 - ⚠️ **真机踩到的坑**：健康检查命令最初写的是 `wget --spider`（HEAD 请求），
   FastAPI 的 `@app.get("/")` 默认不支持 HEAD，返回 405 被 `wget` 判定成链接
   不存在（退出码 8），容器因此被 Docker 判定成 unhealthy——即使进程完全正常、
