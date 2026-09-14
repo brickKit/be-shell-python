@@ -45,11 +45,12 @@ FIRST_COMPLETED)` + 手动 `stop_event.set()` + 对 pending 任务 `.cancel()`�
   不要凭直觉假设现在这份实现直接够用。`infra-print` 的 `migrations/` 目录本身
   也不是它 Python 包的一部分，`Dockerfile`/测试都靠单独 `git clone` 一次对应
   tag 来拿这份目录，见 `README.md`"踩到的真实坑"一节。
-- `main.py` 已经接上 `be-ops` 产出 4/7（`SHELL_CONFIG_JSON`/`SHELL_ENV_JSON`
-  两个环境变量指向的 JSON 文件），不再手写 `Config`/`ModuleSpec`——现在由父
-  仓库根目录的 `infra/shell-compose.yml` 挂载（`make shell-up` 会先
-  `make shell-gen` 重新生成两份 JSON），Task 8 已完成，不再是 Task 6/7 阶段
-  手动 `docker run -v` 的临时状态。
+- `main.py` 已经接上 `be-ops` 产出 4（`SHELL_CONFIG_JSON` 环境变量指向的
+  JSON 文件，阶段四附加 Task 0.2 起同时携带每个模块自己的 `configSchema`
+  解析结果），不再手写 `Config`/`ModuleSpec`；再按平台原生注入的
+  `BRICKKIT_SERVED_MEMBERS` 筛出这次真的被 `servedBy` 收编的成员。原来还
+  需要的 `SHELL_ENV_JSON`（产出 7）已退休，见 `README.md`"现状补充（阶段
+  四附加 Task 0.2/0.3 完成）"一节。
 - ⚠️ **真机踩到的坑**：健康检查命令最初写的是 `wget --spider`（HEAD 请求），
   FastAPI 的 `@app.get("/")` 默认不支持 HEAD，返回 405 被 `wget` 判定成链接
   不存在（退出码 8），容器因此被 Docker 判定成 unhealthy——即使进程完全正常、

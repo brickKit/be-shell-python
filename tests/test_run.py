@@ -142,52 +142,12 @@ async def test_单模块Start里异常不崩溃整个进程只是优雅退出并
     await asyncio.wait_for(run(cfg), timeout=5)
 
 
-def test_export_dependency_endpoints_真机复现(monkeypatch: pytest.MonkeyPatch) -> None:
-    """同 be-shell-go 阶段四 Task 9 真机撞到的同一个 bug：besdk.endpoint()
-    （SystemClient/UserClient 内部都靠它）读的是 os.environ，不是
-    rt.config——ModuleSpec.env 只喂进了 rt.config，从未真的写进进程环境。
-    """
-    from shell.run import _export_dependency_endpoints
-
-    monkeypatch.delenv("INFRA_AUTHZ_ENDPOINT", raising=False)
-    monkeypatch.delenv("COMPONENT_ID", raising=False)
-
-    modules = [
-        ModuleSpec(
-            component_id="infra/iam-casdoor",
-            component_version="0.0.1",
-            env={
-                "COMPONENT_ID": "infra/iam-casdoor",  # 非 _ENDPOINT 结尾，不该被导出
-                "INFRA_AUTHZ_ENDPOINT": "http://127.0.0.1:8223",
-            },
-            http_port=0,
-            new_module=None,  # 本用例不会真的调用它
-        )
-    ]
-
-    _export_dependency_endpoints(modules)
-
-    assert os.environ.get("INFRA_AUTHZ_ENDPOINT") == "http://127.0.0.1:8223"
-    assert os.environ.get("COMPONENT_ID") is None
-
-
-def test_export_dependency_endpoints_同一个外壳内不一致时报错(monkeypatch: pytest.MonkeyPatch) -> None:
-    from shell.run import _export_dependency_endpoints
-
-    monkeypatch.delenv("INFRA_AUTHZ_ENDPOINT", raising=False)
-
-    modules = [
-        ModuleSpec(
-            component_id="a", component_version="0.0.1",
-            env={"INFRA_AUTHZ_ENDPOINT": "http://127.0.0.1:8223"},
-            http_port=0, new_module=None,
-        ),
-        ModuleSpec(
-            component_id="b", component_version="0.0.1",
-            env={"INFRA_AUTHZ_ENDPOINT": "http://host.docker.internal:8223"},
-            http_port=0, new_module=None,
-        ),
-    ]
-
-    with pytest.raises(RuntimeError):
-        _export_dependency_endpoints(modules)
+# ⚠️ 原来这里有 test_export_dependency_endpoints_真机复现/
+# test_export_dependency_endpoints_同一个外壳内不一致时报错 两条用例，
+# 测的是同 be-shell-go 阶段四 Task 9 真机复现的同一个 bug：
+# besdk.endpoint() 读 os.environ 不是 rt.config，ModuleSpec.env 必须
+# 额外导出到进程环境才能被 SystemClient/UserClient 看到。servedBy 落地
+# 后（阶段四附加 Task 0.2/0.3）这一步整个不需要了——brickKit 自己在
+# 生成阶段就把 *_ENDPOINT 类变量直接合并进外壳容器自己的 os.environ，
+# 本包一启动就已经看得见，_export_dependency_endpoints 函数与这两条
+# 测试一并删除。完整历史留在 README.md，不随代码一起消失。

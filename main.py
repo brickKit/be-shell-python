@@ -1,8 +1,9 @@
-"""be-shell-python 的进程入口——阶段四 Task 7：读 ``be-ops`` 产出 4
-（``SHELL_CONFIG_JSON``）/产出 7（``SHELL_ENV_JSON``）两份数据文件，按
-``SHELL_NAME`` 挑出自己要装的外壳，把 ``componentId`` 字符串映到真实的
-Python 源码 import——判断与 ``be-shell-go`` 的 ``cmd/shell/main.go``
-逐一对应（同一套机制的 Python 版，不是另一套设计）。
+"""be-shell-python 的进程入口——读 ``be-ops`` 产出 4（``SHELL_CONFIG_JSON``），
+按 ``SHELL_NAME`` 挑出自己要装的外壳，再按平台原生注入的
+``BRICKKIT_SERVED_MEMBERS`` 筛出这次真的被 ``servedBy`` 收编、活着的
+成员，把 ``componentId`` 字符串映到真实的 Python 源码 import——判断与
+``be-shell-go`` 的 ``cmd/shell/main.go`` 逐一对应（同一套机制的 Python
+版，不是另一套设计）。
 
 本仓库目前只对应 1 个外壳实例（``py-render``，唯一成员
 ``infra/print``），但装配方式仍然走同一套"数据驱动配置、代码驱动装配"
@@ -11,6 +12,11 @@ import 系统没有编译期强制，但判断与 Go 版一致：具体要跑哪
 ``create_module``，必须是这个文件里静态写死的 import，不能凭字符串
 反射着导入），真的有第二个 Python 组件加入 ``py-render`` 时，只需要在
 ``_MODULE_REGISTRY`` 里加一行，不需要重新设计这一层。
+
+⚠️ 阶段四附加 Task 0.2/0.3：原来还要读 ``be-ops`` 产出 7
+（``SHELL_ENV_JSON``）拿每个模块自己的 env——servedBy 落地后这份数据并
+进了产出 4 的 ``config`` 字段，``SHELL_ENV_JSON`` 整个退休。完整调研
+过程见装配仓库 ``docs/plans/04b-验证记录.md`` Task 0.2。
 """
 
 from __future__ import annotations
@@ -51,52 +57,87 @@ def _load_json(path: str) -> list[dict]:
         return json.load(f)
 
 
+_VERSIONED_NAME_RE_CHARS = str.maketrans({"/": "-", ".": "-"})
+
+
+def _versioned_service_name(component_id: str, version: str) -> str:
+    """与 brickKit 自己推导服务名的算法逐字对应（总纲 §2.1："/ → -、
+    . → -、全部小写，再接精确版本号"）——"mdm/customer"@"1.0.7" →
+    "mdm-customer-1-0-7"，跟 ``BRICKKIT_SERVED_MEMBERS`` 里的写法逐字
+    一致。同 ``be-shell-go`` 的 ``versionedServiceName``。
+    """
+    return f"{component_id}-{version}".translate(_VERSIONED_NAME_RE_CHARS).lower()
+
+
+def _served_member_set() -> set[str]:
+    """读 ``BRICKKIT_SERVED_MEMBERS``（平台原生注入，servedBy 外壳"这次
+    真的被收编、活着"的成员清单，逗号分隔的版本化服务名）。
+
+    ⚠️ 必须区分"变量不存在"与"变量是空字符串"——不存在意味着这个容器
+    可能不是被 servedBy 正常收编启动的（平台总会至少注入一个空字符串，
+    真的读不到通常说明是手动 docker run 忘了传，必须报错，不能悄悄
+    退化成"全部实例化"这类旧行为）；空字符串是合法状态，意味着这次
+    没有任何成员被收编，应该装出 0 个模块。同 ``be-shell-go`` 的
+    ``servedMemberSet``（Go 用 ``os.LookupEnv``，Python 用
+    ``sentinel not in os.environ`` 达到同样的区分效果）。
+    """
+    if "BRICKKIT_SERVED_MEMBERS" not in os.environ:
+        raise RuntimeError(
+            "BRICKKIT_SERVED_MEMBERS 未设置——这个容器看起来不是被 servedBy 正常收编启动的"
+            "（平台总会至少注入一个空字符串），检查是不是手动 docker run 漏传了这个变量"
+        )
+    raw = os.environ["BRICKKIT_SERVED_MEMBERS"]
+    if not raw:
+        return set()
+    return {name.strip() for name in raw.split(",")}
+
+
 def _build_modules(shell_name: str) -> list[ModuleSpec]:
     config_path = os.environ.get("SHELL_CONFIG_JSON")
-    env_path = os.environ.get("SHELL_ENV_JSON")
-    if not config_path or not env_path:
-        raise RuntimeError("SHELL_CONFIG_JSON/SHELL_ENV_JSON 未设置（be-ops shell-config/shell-env 的产出路径）")
+    if not config_path:
+        raise RuntimeError("SHELL_CONFIG_JSON 未设置（be-ops shell-config 的产出路径）")
+    served = _served_member_set()
 
     config_shells = _load_json(config_path)
-    env_shells = _load_json(env_path)
-
     config_shell = next((s for s in config_shells if s["name"] == shell_name), None)
     if config_shell is None:
-        raise RuntimeError(
-            f"shell-config.json 里没有外壳 {shell_name!r}（是不是 brickkit.yaml 还没原子式切换，或者 SHELL_NAME 拼错了）"
-        )
-    env_shell = next((s for s in env_shells if s["Name"] == shell_name), None)
-    if env_shell is None:
-        raise RuntimeError(
-            f"shell-env.json 里没有外壳 {shell_name!r}（是不是 be-ops shell-env 生成时这个外壳还没原子式切换完，被跳过了）"
-        )
-    env_by_component = {m["ComponentID"]: m["Env"] for m in env_shell["Modules"]}
+        raise RuntimeError(f"shell-config.json 里没有外壳 {shell_name!r}（是不是 SHELL_NAME 拼错了）")
 
     _register_known_modules()
 
+    matched: set[str] = set()
     specs: list[ModuleSpec] = []
     for m in config_shell["modules"]:
         component_id = m["componentId"]
+        name = _versioned_service_name(component_id, m["version"])
+        if name not in served:
+            # shell-config.json 列的是"这个外壳理论上有哪些成员"，不是
+            # "这次都被收编了"——没在 BRICKKIT_SERVED_MEMBERS 里的成员
+            # 这次没被平台收编，正常跳过，不是错误。
+            continue
+        matched.add(name)
         new_module = _MODULE_REGISTRY.get(component_id)
         if new_module is None:
             raise RuntimeError(
                 f"组件 {component_id} 在 shell-config.json 里，但 _MODULE_REGISTRY 没有登记它的真实 create_module——是不是漏了给它加 import"
             )
-        env = env_by_component.get(component_id)
-        if env is None:
-            raise RuntimeError(
-                f"组件 {component_id} 在 shell-config.json 里，但 shell-env.json 的外壳 {shell_name!r} 下找不到它对应的环境变量"
-            )
         specs.append(
             ModuleSpec(
                 component_id=component_id,
                 component_version=m["version"],
-                env=env,
+                env=m.get("config") or {},
                 http_port=m["httpPort"],
                 new_module=new_module,
                 extra_ports=m.get("extraPorts") or {},
                 schema=m["schema"],
             )
+        )
+
+    missing = served - matched
+    if missing:
+        raise RuntimeError(
+            f"BRICKKIT_SERVED_MEMBERS 里有 shell-config.json 找不到的成员：{sorted(missing)}"
+            "（是不是 brickkit.yaml 改完之后忘了重新跑 be-ops shell-config）"
         )
     return specs
 

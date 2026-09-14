@@ -18,11 +18,14 @@ Python 外壳的启动器：把 N 个组件模块（各自的 `Module`）装进�
   `stop_event`，等它被 set 之后自己优雅退出"，`Module.start` 的既有约定则是
   "取消时必须返回"，两种停止方式混着用，`run_standalone` 早就用前者的编排方式
   解决了，外壳只是把"1 个模块的任务集合"换成"N 个模块的任务集合拼在一起"。
-- `main.py`：进程入口，已经接上 `be-ops` 产出 4（`SHELL_CONFIG_JSON`）/产出 7
-  （`SHELL_ENV_JSON`）——按 `SHELL_NAME` 从两份数据文件里挑出自己要装的外壳，
-  `_MODULE_REGISTRY` 是本仓库唯一"componentId 字符串 → 真实 Python 源码 import"
-  的静态映射（同 `be-shell-go` 的 `moduleRegistry`，判断逐一对应）。本仓库目前
-  只对应 1 个外壳实例（`py-render`，唯一成员 `infra/print`）。
+- `main.py`：进程入口，已经接上 `be-ops` 产出 4（`SHELL_CONFIG_JSON`）——按
+  `SHELL_NAME` 挑出自己要装的外壳，再按平台原生注入的 `BRICKKIT_SERVED_MEMBERS`
+  筛出这次真的被 `servedBy` 收编、活着的成员（阶段四附加 Task 0.2/0.3 起——原来
+  还需要单独一份 `SHELL_ENV_JSON` 才能拿到每个模块自己的 `env`，已并入
+  `SHELL_CONFIG_JSON` 的 `config` 字段，见下方"现状补充"），`_MODULE_REGISTRY`
+  是本仓库唯一"componentId 字符串 → 真实 Python 源码 import"的静态映射（同
+  `be-shell-go` 的 `moduleRegistry`，判断逐一对应）。本仓库目前只对应 1 个外壳
+  实例（`py-render`，唯一成员 `infra/print`）。
 - 已用假模块验证过骨架本身（`tests/test_run.py`）：多模块共享 db/nats 但各自
   独立字段、外壳自己的 `health_port` 独立于任何模块响应、单模块 `start()` 里的
   异常被干净地记录下来（带 `module_component_id`）且不会让整个进程崩溃、
@@ -66,6 +69,23 @@ Python 外壳的启动器：把 N 个组件模块（各自的 `Module`）装进�
 （`besdk.endpoint()` 读的是 `os.environ`，不是 `rt.config`，两边实现逐字对应）。本仓库目前唯一的
 模块（`infra-print`）没有任何依赖边，不会真的触发这条路径，但判断必须跟 `be-shell-go` 保持一致。
 完整根因分析见 `be-shell-go` 的 README 或父仓库 `docs/plans/04-阶段四-做外壳验拆回.md` Task 9。
+
+⚠️ **这段代码本身已在阶段四附加 Task 0.2/0.3 里退休**，见下方对应"现状补充"——根因分析依然成立，
+只是"谁负责把值放进 `os.environ`"这件事的责任方从外壳自己换成了平台。
+
+## 现状补充（阶段四附加 Task 0.2/0.3 完成，2026-09-14）——servedBy 落地，上面 Task 9 的修复代码退休了
+
+brickKit 新增了 `servedBy` 机制之后，上面 Task 9 那条 `_export_dependency_endpoints`——连同它要读的
+`be-ops` 产出 7（`SHELL_ENV_JSON`）——整个退休了：`servedBy` 落地后，brickKit 自己在生成阶段就把
+`*_ENDPOINT` 类变量直接合并进外壳容器**自己的** `os.environ`，这个进程一启动就已经看得见，不再需要
+`shell/run.py` 自己再写一遍。函数本体与它的两条回归测试（`test_export_dependency_endpoints_*`）已从
+`shell/run.py`/`tests/test_run.py` 删除。
+
+`main.py` 的 `_build_modules` 同时换了第二件事：不再无条件把 `SHELL_CONFIG_JSON` 里列出的模块全部
+实例化，改成额外按平台原生注入的 `BRICKKIT_SERVED_MEMBERS`（这次真的被收编、活着的成员，逗号分隔的
+版本化服务名）筛一遍，判断逐一对应 `be-shell-go` 的 `buildModules`。每个模块自己的 `configSchema`
+解析结果（原来 `SHELL_ENV_JSON` 的 `env` 字段）也一并挪进了 `SHELL_CONFIG_JSON` 新增的 `config` 字段
+（`be-ops` 侧的完整调研过程见装配仓库 `docs/plans/04b-验证记录.md` Task 0.2）。
 
 ## 现状补充（阶段四 Task 8 完成，2026-09-13）
 
