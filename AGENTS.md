@@ -58,13 +58,17 @@ FIRST_COMPLETED)` + 手动 `stop_event.set()` + 对 pending 任务 `.cancel()`�
   `GET` 请求真的能拿到 `{"ok":true}`。改成普通 `GET`（`wget -q -O /dev/null`）
   解决，见 `infra/shell-compose.yml`。Go 侧的健康检查是裸 `http.HandlerFunc`
   （不区分方法），没有这个问题，但两边判据要保持一致。
-- ⚠️ **`BRICKKIT_SERVED_MEMBERS_CONFIG` 只对非密钥类 config 值成立**：
-  `be-shell-go` 真机 `brickkit up` 复现出密钥类值会被 docker compose
-  自己的全文本 `${VAR}` 替换撑坏 JSON（原始换行符插进本该是单行 JSON
-  的字符串里）——`shell/run.py` 的 `_env_with_process_fallback` 因此
-  **没有**退休，本仓库目前唯一模块 `infra/print` 没有密钥类配置项，
-  不会真的触发，但判断需要跟 `be-shell-go` 保持一致。见 `README.md`
-  "Task 0.6 修补"一节。
+- ⚠️ **`BRICKKIT_SERVED_MEMBERS_CONFIG` 里密钥类的值可能带着裸控制
+  字符**：`be-shell-go` 真机 `brickkit up` 复现出——docker compose 读取
+  生成好的 docker-compose.yaml 时会对整份文件按纯文本做 `${VAR}` 替换，
+  不知道某个 `${VAR}` 恰好嵌在这份 JSON 字符串内部，真实密钥（PEM 私钥）
+  自带原始换行符，替换进去会把 JSON 从中间断开。`main.py` 的
+  `_sanitize_served_members_config` 在 `json.loads` 之前把 JSON 字符串
+  **内部**的裸控制字符转义回合法形式来根治这个问题（普适性修复，不区分
+  是哪个 key）——不是靠"密钥类值另开一条路"这种绕过办法，
+  `_env_with_process_fallback` 已经不需要存在。本仓库目前唯一模块
+  `infra/print` 没有密钥类配置项，不会真的触发，但判断需要跟
+  `be-shell-go` 保持一致。见 `README.md`"Task 0.6"一节的完整时间线。
 
 ## 测试
 

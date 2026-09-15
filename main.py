@@ -86,6 +86,49 @@ def _config_env_var_name(key: str) -> str:
     return _ENV_VAR_NAME_BOUNDARY_RE.sub("_", normalized).upper()
 
 
+def _sanitize_served_members_config(raw: str) -> str:
+    """修复 docker compose 自己对 ``${VAR}`` 做全文本替换时、在 JSON
+    字符串内部留下的原始控制字符——判断逐一对应 ``be-shell-go`` 的
+    ``sanitizeServedMembersConfig``。
+
+    真机 ``brickkit up`` 复现出：brickKit 生成 ``BRICKKIT_SERVED_
+    MEMBERS_CONFIG`` 这份 JSON 的那一刻，字符串内部不会有任何未转义的
+    控制字符；但密钥类 config 值在 ``brickkit.yaml`` 里写的是
+    ``${VAR}`` 占位符，docker compose 读取生成好的
+    ``docker-compose.yaml`` 时会对整份文件按纯文本做 ``${VAR}``
+    替换，不知道某个 ``${VAR}`` 恰好嵌在这份 JSON 字符串内部——真实
+    密钥（PEM 私钥）自带原始换行符，替换进去就在"合法 JSON 字符串内部
+    绝不会自己出现"的位置制造出裸控制字符。
+
+    只转义**字符串内部**的控制字符，不能不分场合整段替换——字符串外部
+    的裸换行/空白本来就是合法 JSON，用一个只关心"现在在不在字符串
+    里面"的最小状态机（遇到未转义的 ``"`` 切换状态，``\\`` 时跳过下一个
+    字符防止误判转义序列）来分辨。
+    """
+    out: list[str] = []
+    in_string = False
+    i = 0
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if in_string and ch == "\\" and i + 1 < n:
+            out.append(raw[i : i + 2])
+            i += 2
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            i += 1
+            continue
+        if in_string and ch in ("\n", "\r", "\t"):
+            out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[ch])
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _build_modules() -> list[ModuleSpec]:
     raw = os.environ.get("BRICKKIT_SERVED_MEMBERS_CONFIG")
     if raw is None:
@@ -95,7 +138,7 @@ def _build_modules() -> list[ModuleSpec]:
         )
 
     try:
-        members = json.loads(raw)
+        members = json.loads(_sanitize_served_members_config(raw))
     except ValueError as exc:
         raise RuntimeError(f"解析 BRICKKIT_SERVED_MEMBERS_CONFIG 失败: {exc}") from exc
 

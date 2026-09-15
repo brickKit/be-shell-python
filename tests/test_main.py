@@ -116,6 +116,39 @@ def test_缺pgSchema时报错(monkeypatch: pytest.MonkeyPatch) -> None:
         main._build_modules()
 
 
+def test_docker_compose对VAR占位符做全文本替换撑坏JSON时能自愈(monkeypatch: pytest.MonkeyPatch) -> None:
+    """判断逐一对应 ``be-shell-go`` 的
+    ``TestBuildModules_docker_compose对VAR占位符做全文本替换撑坏JSON时能自愈``
+    ——真机 ``brickkit up`` 复现出的真实 bug：docker compose 对整份生成好
+    的 docker-compose.yaml 按纯文本做 ``${VAR}`` 替换，会把真实密钥的原始
+    换行符直接拼进本该是单行 JSON 的字符串里、撑坏 JSON。本仓库目前唯一
+    模块（infra/print）没有密钥类配置项，不会真的触发，但判断需要跟
+    be-shell-go 保持一致。
+    """
+    broken = (
+        '[{"componentId":"infra/print","version":"1.0.7","httpPort":8400,'
+        '"config":{"pgSchema":"infra_print","someSecret":"-----BEGIN KEY-----\n'
+        "line-two\n-----END KEY-----\"}}]"
+    )
+    monkeypatch.setenv("BRICKKIT_SERVED_MEMBERS_CONFIG", broken)
+
+    specs = main._build_modules()
+
+    assert len(specs) == 1
+    assert specs[0].env["SOME_SECRET"] == "-----BEGIN KEY-----\nline-two\n-----END KEY-----"
+
+
+def test_sanitize_served_members_config只转义字符串内部的裸控制字符() -> None:
+    """单独钉住最容易出错的两个边界：字符串外部的裸换行（纯格式化空白）
+    不能被误伤；字符串内部已转义的双引号不能扰乱状态机。"""
+    raw = '[\n  {"a":"line1\nline2","b":"has \\"quote\\" then\ttab"}\n]'
+
+    got = json.loads(main._sanitize_served_members_config(raw))
+
+    assert got[0]["a"] == "line1\nline2"
+    assert got[0]["b"] == 'has "quote" then\ttab'
+
+
 @pytest.mark.parametrize(
     ("key", "want"),
     [

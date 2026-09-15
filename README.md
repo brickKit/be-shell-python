@@ -159,3 +159,29 @@ docker compose 自己读取生成好的 docker-compose.yaml 时**——它对整
 配置项，这个 bug 不会真的在本仓库触发，恢复纯粹是为了保持两个外壳仓库的判断
 逐一对应——真的有第二个 Python 组件带密钥类配置项加入 `py-render` 时，这里
 必须已经是对的。真机复核结果见父仓库 `docs/plans/04b-验证记录.md` Task 0.6。
+
+## 现状补充（阶段四附加 Task 0.6 根治，2026-09-15）——上一节的修补方向站不住脚，真正的修复是 `_sanitize_served_members_config`
+
+判断逐一对应 `be-shell-go` 同一次改动：上一节恢复 `_env_with_process_fallback`
+的方向真机复测后发现治标不治本——真正撑坏 JSON 的是拥有该密钥的成员**自己**
+那条 config 记录（brickKit 从它自己的配置计算出来、塞进
+`BRICKKIT_SERVED_MEMBERS_CONFIG` 数组里的那一份），不会因为外壳自己多存一份
+而消失，`_env_with_process_fallback` 完全没有触及问题的根。
+
+真正的修复在解析这一步本身：`main.py` 新增 `_sanitize_served_members_config`，
+在 `json.loads` 之前跑一个只关心"现在在不在 JSON 字符串里面"的最小状态机
+（遇到未转义的 `"` 切换状态，`\` 时跳过下一个字符防止转义序列被误判），把
+**字符串内部**被替换进来的裸控制字符（`\n`/`\r`/`\t`）转义回合法形式——合法
+JSON 字符串内部本来就不可能出现裸控制字符，见到了就一定是 docker compose 那
+次替换造成的，不需要先判断"这个 key 是不是密钥"，对任何 key 都通用。字符串
+**外部**的裸换行（比如手写测试数据为了可读性跨行）不受影响，仍然是合法 JSON
+空白，不会被误伤（`test_sanitize_served_members_config只转义字符串内部的裸
+控制字符` 专门钉住这条边界）。
+
+修复到这一步之后，`_env_with_process_fallback` **再次删除**——不再需要"密钥
+类值另开一条路"这种绕过办法，`BRICKKIT_SERVED_MEMBERS_CONFIG` 对所有 config
+值（含密钥类）统一成立，回到 Task 0.6 最初设想的干净形态。版本升到 v0.3.2。
+这仍然是 `BRICKKIT_SERVED_MEMBERS_CONFIG` 机制本身的普适性设计缺口（docker
+compose 的全文本 `${VAR}` 替换不知道自己在 JSON 字符串内部），本仓库这边的
+`_sanitize_served_members_config` 只是下游兜底，已写成反馈文档给 brickKit。
+真机复核结果见父仓库 `docs/plans/04b-验证记录.md` Task 0.6。
