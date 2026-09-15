@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -93,6 +94,46 @@ class _Built:
     mod: "Module"
 
 
+def _env_with_process_fallback(specific: dict[str, str]) -> dict[str, str]:
+    """把外壳自己的进程环境（``os.environ``）当一层兜底，叠加上
+    ``specific``（这个模块自己的、``BRICKKIT_SERVED_MEMBERS_CONFIG``
+    里的 config）——``specific`` 里已经有的 key 优先，兜底层只补
+    ``specific`` 没提供的 key。同 ``be-shell-go`` 的
+    ``envWithProcessFallback``，判断逐一对应。
+
+    ⚠️ 阶段四附加 Task 0.6 真机复现的真实 bug（回归的方向跟"BRICKKIT_
+    SERVED_MEMBERS_CONFIG 自己用 JSON 编码就足够"这个一开始的直觉相反）：
+    转义在"brickKit 生成 JSON 的那一刻"确实是对的——问题出在**更后面
+    一步**。密钥类的 config 值在 ``brickkit.yaml`` 里写的是
+    ``${APP_TOKEN_SIGNING_KEY_PEM}`` 这样的占位符（真实密钥不进
+    git），brickKit 生成 ``BRICKKIT_SERVED_MEMBERS_CONFIG`` 这个 JSON
+    时，占位符字符串本身没有特殊字符，原样编码完全合法。真正的展开
+    发生在 docker compose 自己读取生成好的 ``docker-compose.yaml`` 时
+    ——docker compose 对整份文件按纯文本做 ``${VAR}`` 替换，不知道也
+    不关心某个 ``${VAR}`` 恰好嵌在一段本该是合法 JSON 的字符串内部。
+    真实密钥自带原始换行符，替换进去直接把 JSON 字符串从中间断开
+    （``be-shell-go`` 那边真机复现出 ``shell-go-infra`` 因此
+    crash-loop，完整根因分析见其 ``internal/shell.
+    envWithProcessFallback`` 本体注释）。这是 ``BRICKKIT_SERVED_
+    MEMBERS_CONFIG`` 机制本身的普适性设计缺口，已反馈给 brickKit。
+
+    在 brickKit 自己修好之前，密钥类配置项继续走"外壳自己
+    component.yaml 上的独立 configSchema 项"这条老路——docker compose
+    对着一个普通的顶层 ``KEY=${VAR}`` 标量赋值做替换不会有上面的问题
+    （不是嵌在别的字符串里的子串），本函数就是把这份"外壳自己才有、
+    只有一个模块真正需要"的数据，兜底传给需要它的那个模块。本仓库
+    目前唯一的模块（``infra-print``）没有这类秘钥，不会真的触发这条
+    路径，但判断必须跟 ``be-shell-go`` 保持一致，真的有第二个 Python
+    组件加入 ``py-render`` 且带秘钥类配置项时，这里必须已经是对的。
+
+    安全性同 ``be-shell-go`` 的既有判据：只对本项目已知只会被唯一一个
+    模块使用的 key 有效，新增秘钥前先确认这条前提仍然成立。
+    """
+    out = dict(os.environ)
+    out.update(specific)
+    return out
+
+
 async def run(cfg: Config, stop_event: asyncio.Event | None = None) -> None:
     """装配整个外壳：``bootstrap`` 一次 → 开一个共享连接池/NATS 连接 →
     ``init_shell_authz`` 一次 → 逐个模块调 ``new_module`` → 按同一顺序
@@ -118,21 +159,11 @@ async def run(cfg: Config, stop_event: asyncio.Event | None = None) -> None:
 
     built: list[_Built] = []
     for spec in cfg.modules:
-        # ⚠️ 阶段四附加 Task 0.6（brickKit v0.4.2）：env 直接用 spec.env，
-        # 不再需要一层"外壳自己进程环境兜底"——旧版这里曾经因为 be-ops
-        # 手工生成的 SHELL_CONFIG_JSON 会把整个值是 ``${VAR}`` 占位符的
-        # 密钥类配置项整条排除（真机测过：带原始换行符的 PEM 值直接拼进
-        # JSON 字符串会撑坏 JSON），需要一层兜底从外壳自己的进程环境把
-        # 这几个值补回来。brickKit 原生的 BRICKKIT_SERVED_MEMBERS_CONFIG
-        # 用真正的 JSON 编码正确处理这类值，每个成员自己的 config 里
-        # 已经带着完整的、真实解析过的密钥值——main.py 的 _build_modules
-        # 直接从这份数据里取，不再有"这几个 key 被排除"这回事，也就不
-        # 需要兜底层了。
         rt = besdk.new_shell_runtime(
             ShellModuleConfig(
                 component_id=spec.component_id,
                 component_version=spec.component_version,
-                env=spec.env,
+                env=_env_with_process_fallback(spec.env),
                 http_port=spec.http_port,
                 extra_ports=spec.extra_ports,
             ),

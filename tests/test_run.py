@@ -152,13 +152,22 @@ async def test_单模块Start里异常不崩溃整个进程只是优雅退出并
 # 本包一启动就已经看得见，_export_dependency_endpoints 函数与这两条
 # 测试一并删除。完整历史留在 README.md，不随代码一起消失。
 #
-# ⚠️ 原来这里还有 test_env_with_process_fallback_specific优先于进程环境，
-# 测的是阶段四附加 Task 0.4 真机复现出的秘钥类 configSchema 项
-# （appTokenSigningKeyPem 等）：那时 be-ops 手工生成的 SHELL_CONFIG_JSON
-# 会把这类值整条排除，必须靠外壳自己进程环境兜底才能到达需要它的模块。
-# 阶段四附加 Task 0.6（brickKit v0.4.2）起，平台原生的
-# BRICKKIT_SERVED_MEMBERS_CONFIG 用真正的 JSON 编码正确处理这类值（不会
-# 撑坏 JSON，也不会提交进 git——brickkit.yaml 里仍然是 ``${VAR}`` 占位符，
-# 只有运行时注入的这个环境变量里才是展开后的真实值），
-# _env_with_process_fallback 函数与这条测试一并删除，兜底机制整个不
-# 需要了。
+def test_env_with_process_fallback_specific优先于进程环境(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_env_with_process_fallback` 在阶段四附加 Task 0.6 里曾短暂被
+    认为已经不需要了（当时以为 BRICKKIT_SERVED_MEMBERS_CONFIG 自己用
+    JSON 编码就足够），be-shell-go 那边真机 `brickkit up` 复现出这条
+    判断是错的——docker compose 自己对生成好的 docker-compose.yaml 做
+    全文本 `${VAR}` 替换，会把真实密钥的原始换行符直接拼进本该是单行
+    JSON 的字符串里、撑坏 JSON。这条测试与函数一并恢复，判断逐一对应
+    be-shell-go 的 `TestEnvWithProcessFallback_specific优先于进程环境`，
+    完整根因分析见 `_env_with_process_fallback` 本体注释与 README.md。
+    """
+    from shell.run import _env_with_process_fallback
+
+    monkeypatch.setenv("FAKE_SHELL_LEVEL_SECRET", "来自外壳自己进程环境的值")
+    monkeypatch.setenv("PG_SCHEMA", "不该被用到——specific 里有同名 key")
+
+    got = _env_with_process_fallback({"PG_SCHEMA": "mdm_customer"})
+
+    assert got["FAKE_SHELL_LEVEL_SECRET"] == "来自外壳自己进程环境的值"
+    assert got["PG_SCHEMA"] == "mdm_customer"

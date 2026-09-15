@@ -58,6 +58,13 @@ FIRST_COMPLETED)` + 手动 `stop_event.set()` + 对 pending 任务 `.cancel()`�
   `GET` 请求真的能拿到 `{"ok":true}`。改成普通 `GET`（`wget -q -O /dev/null`）
   解决，见 `infra/shell-compose.yml`。Go 侧的健康检查是裸 `http.HandlerFunc`
   （不区分方法），没有这个问题，但两边判据要保持一致。
+- ⚠️ **`BRICKKIT_SERVED_MEMBERS_CONFIG` 只对非密钥类 config 值成立**：
+  `be-shell-go` 真机 `brickkit up` 复现出密钥类值会被 docker compose
+  自己的全文本 `${VAR}` 替换撑坏 JSON（原始换行符插进本该是单行 JSON
+  的字符串里）——`shell/run.py` 的 `_env_with_process_fallback` 因此
+  **没有**退休，本仓库目前唯一模块 `infra/print` 没有密钥类配置项，
+  不会真的触发，但判断需要跟 `be-shell-go` 保持一致。见 `README.md`
+  "Task 0.6 修补"一节。
 
 ## 测试
 

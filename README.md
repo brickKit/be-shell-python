@@ -141,3 +141,21 @@ Docker 判定成 unhealthy——即使进程本身完全正常、`GET` 请求真
   这条线已经没有存在的理由。
 
 真机复核结果见父仓库 `docs/plans/04b-验证记录.md` Task 0.6。
+
+## 现状补充（阶段四附加 Task 0.6 修补，2026-09-15）——`_env_with_process_fallback` 恢复
+
+上面一节"整个删除 `_env_with_process_fallback`"的判断，`be-shell-go` 那边真机
+`brickkit up` 复现出是错的——根因跟一开始的直觉相反：`BRICKKIT_SERVED_MEMBERS_
+CONFIG` 这个 JSON 在 brickKit 生成它的那一刻确实是合法的（密钥类的值在
+`brickkit.yaml` 里还是 `${VAR}` 占位符，没有特殊字符）。**真正的展开发生在
+docker compose 自己读取生成好的 docker-compose.yaml 时**——它对整份文件按纯
+文本做 `${VAR}` 替换，不知道某个 `${VAR}` 恰好嵌在一段本该是合法 JSON 的字符串
+内部，真实密钥的原始换行符替换进去会直接把 JSON 断开（`be-shell-go` 的
+`shell-go-infra` 因此 crash-loop，完整根因分析见其 README 同名一节）。这是
+`BRICKKIT_SERVED_MEMBERS_CONFIG` 机制本身的普适性设计缺口，已反馈给 brickKit。
+
+`shell/run.py` 的 `_env_with_process_fallback` 与它的回归测试原样恢复，判断
+重新跟 `be-shell-go` 保持一致。本仓库目前唯一模块（`infra/print`）没有密钥类
+配置项，这个 bug 不会真的在本仓库触发，恢复纯粹是为了保持两个外壳仓库的判断
+逐一对应——真的有第二个 Python 组件带密钥类配置项加入 `py-render` 时，这里
+必须已经是对的。真机复核结果见父仓库 `docs/plans/04b-验证记录.md` Task 0.6。
