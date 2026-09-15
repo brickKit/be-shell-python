@@ -4,7 +4,7 @@ kind: Component
 metadata:
   id: shell/py-render
   name: Python 外壳（打印渲染域）
-  version: 0.2.5                     # 直接复用 be-shell-python 这个 git 仓库自己的 tag，
+  version: 0.2.6                     # 直接复用 be-shell-python 这个 git 仓库自己的 tag，
                                       # 镜像就是这个 tag 构建出来的（shells/python/Makefile
                                       # 的 image 目标），两者天生一致
   description: 把 infra/print 合并进一个进程——本身不含任何业务逻辑，纯装配（设计书第 13 章）
@@ -46,7 +46,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/be-shell-python:0.2.5
+  image: brickenterprise/be-shell-python:0.2.6
   port: 8402                         # registry/ports.tsv，_shell-py-render 行
   labels:                            # 同 be-shell-go 三个外壳：成员自己的
                                       # prometheus.io/port 已删掉，合并后指标只走外壳
