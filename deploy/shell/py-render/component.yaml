@@ -4,9 +4,14 @@ kind: Component
 metadata:
   id: shell/py-render
   name: Python 外壳（打印渲染域）
-  version: 0.2.6                     # 直接复用 be-shell-python 这个 git 仓库自己的 tag，
+  version: 0.2.7                     # 直接复用 be-shell-python 这个 git 仓库自己的 tag，
                                       # 镜像就是这个 tag 构建出来的（shells/python/Makefile
-                                      # 的 image 目标），两者天生一致
+                                      # 的 image 目标），两者天生一致。0.2.7：真机验证
+                                      # servedBy 时发现外壳自己 /healthz 端口写在根路径
+                                      # "/"、且没注册 HEAD，brickKit 生成的健康检查用
+                                      # wget --spider（HEAD）探测 /healthz 必然 404/405，
+                                      # 镜像里又没装 curl 兜不住降级方案——改成同 besdk
+                                      # 一致的写法（/healthz + 显式注册 HEAD）
   description: 把 infra/print 合并进一个进程——本身不含任何业务逻辑，纯装配（设计书第 13 章）
   license: Apache-2.0
   vendor: brickKit
@@ -46,7 +51,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/be-shell-python:0.2.6
+  image: brickenterprise/be-shell-python:0.2.7
   port: 8402                         # registry/ports.tsv，_shell-py-render 行
   labels:                            # 同 be-shell-go 三个外壳：成员自己的
                                       # prometheus.io/port 已删掉，合并后指标只走外壳
