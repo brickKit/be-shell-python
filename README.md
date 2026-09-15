@@ -18,12 +18,14 @@ Python 外壳的启动器：把 N 个组件模块（各自的 `Module`）装进�
   `stop_event`，等它被 set 之后自己优雅退出"，`Module.start` 的既有约定则是
   "取消时必须返回"，两种停止方式混着用，`run_standalone` 早就用前者的编排方式
   解决了，外壳只是把"1 个模块的任务集合"换成"N 个模块的任务集合拼在一起"。
-- `main.py`：进程入口，已经接上 `be-ops` 产出 4——`SHELL_CONFIG_JSON` 环境变量的
-  内容直接是这一个外壳自己的 `modules` 数组（阶段四附加 Task 0.4 起，见下方
-  "现状补充"：servedBy 外壳没有 volumes 可以挂载文件，值就是
-  `be-ops shell-config --shell py-render` 打印出来的那一行，写死在
-  `brickkit.yaml` 的 configSchema 字符串里），再按平台原生注入的
-  `BRICKKIT_SERVED_MEMBERS` 筛出这次真的被 `servedBy` 收编、活着的成员，
+- `main.py`：进程入口，`_build_modules` 直接解析平台原生注入的
+  `BRICKKIT_SERVED_MEMBERS_CONFIG`（brickKit v0.4.2 起原生支持，见下方
+  "现状补充"：一个 JSON 数组，元素就是这次真的被这个外壳收编、活着的成员，
+  含 `componentId`/`version`/`httpPort`/`extraPorts`/合并后的 `config`），不再
+  需要单独去交叉核对 `BRICKKIT_SERVED_MEMBERS`——数组本身天然只包含收编成员。
+  `config` 的键是原始 configSchema 驼峰 key，`_config_env_var_name` 转成
+  `SCREAMING_SNAKE_CASE` 后才是 `besdk.Config` 能查到的名字（算法与 brickKit
+  自己的 `EnvVarName`、`be-shell-go` 的 `configEnvVarName` 逐字对应）。
   `_MODULE_REGISTRY` 是本仓库唯一"componentId 字符串 → 真实 Python 源码 import"
   的静态映射（同 `be-shell-go` 的 `moduleRegistry`，判断逐一对应）。本仓库目前
   只对应 1 个外壳实例（`py-render`，唯一成员 `infra/print`）。
@@ -113,3 +115,29 @@ Docker 判定成 unhealthy——即使进程本身完全正常、`GET` 请求真
 `docs/plans/04-阶段四-做外壳验拆回.md` Task 8。
 
 完整任务清单见父仓库 `docs/plans/04-阶段四-做外壳验拆回.md`。
+
+## 现状补充（阶段四附加 Task 0.6 完成，2026-09-15）——`SHELL_CONFIG_JSON` + `be-ops shell-config` 整体退休
+
+判断与理由跟 `be-shell-go` 同一次改动完全对应（见其 README 同名一节的完整叙事：
+两次真机复发的"手工维护数据过期"失败模式 + 验证组件独立启动能力的摩擦点，两份
+架构提案已被 brickKit v0.4.2 完整采纳，新增 `BRICKKIT_SERVED_MEMBERS_CONFIG` +
+`brickkit up --ignore-served-by`）。本仓库这边的改动：
+
+- `main.py` 的 `_build_modules` 改成直接解析 `BRICKKIT_SERVED_MEMBERS_CONFIG`
+  （不再需要单独按 `BRICKKIT_SERVED_MEMBERS` 筛一遍——这份新变量本身就已经是
+  "这次真的收编了谁"），补一个 `_config_env_var_name`（用
+  `(?<=[a-z0-9])(?=[A-Z])` 正则找驼峰边界插下划线再转大写）把原始驼峰 key 转成
+  `SCREAMING_SNAKE_CASE`，跟 brickKit 自己的 `EnvVarName`、`be-shell-go` 的
+  `configEnvVarName` 逐字对应（已用同一批真实 configSchema key 名对三份实现
+  逐一核对过，包括 `appTokenSigningKeyPem`、`accessTokenTtlSeconds` 这类边界
+  情况）。
+- `shell/run.py` 的 `_env_with_process_fallback`（此前给密钥类配置项兜底用的
+  "外壳自己进程环境当兜底层"）整个删除——`BRICKKIT_SERVED_MEMBERS_CONFIG` 由
+  brickKit 自己的 Go `encoding/json` 序列化生成，正确处理带原始换行符的密钥值
+  （不会撑坏 JSON），本仓库目前唯一模块（`infra/print`）本来就没有密钥类配置项，
+  但判断需要跟 `be-shell-go` 保持一致。
+- `deploy/shell/py-render/component.yaml` 删掉了 `shellConfigJson` 这个
+  configSchema 项——`be-ops shell-config` 子命令、`SHELL_CONFIG_JSON` 手工维护
+  这条线已经没有存在的理由。
+
+真机复核结果见父仓库 `docs/plans/04b-验证记录.md` Task 0.6。

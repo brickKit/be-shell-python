@@ -1,9 +1,7 @@
-"""be-shell-python 的进程入口——读 ``be-ops`` 产出 4（``SHELL_CONFIG_JSON``），
-按 ``SHELL_NAME`` 挑出自己要装的外壳，再按平台原生注入的
-``BRICKKIT_SERVED_MEMBERS`` 筛出这次真的被 ``servedBy`` 收编、活着的
-成员，把 ``componentId`` 字符串映到真实的 Python 源码 import——判断与
-``be-shell-go`` 的 ``cmd/shell/main.go`` 逐一对应（同一套机制的 Python
-版，不是另一套设计）。
+"""be-shell-python 的进程入口——读平台原生注入的
+``BRICKKIT_SERVED_MEMBERS_CONFIG``，把 ``componentId`` 字符串映到真实的
+Python 源码 import——判断与 ``be-shell-go`` 的 ``cmd/shell/main.go`` 逐一
+对应（同一套机制的 Python 版，不是另一套设计）。
 
 本仓库目前只对应 1 个外壳实例（``py-render``，唯一成员
 ``infra/print``），但装配方式仍然走同一套"数据驱动配置、代码驱动装配"
@@ -18,16 +16,26 @@ import 系统没有编译期强制，但判断与 Go 版一致：具体要跑哪
 进了产出 4 的 ``config`` 字段，``SHELL_ENV_JSON`` 整个退休。完整调研
 过程见装配仓库 ``docs/plans/04b-验证记录.md`` Task 0.2。
 
-⚠️ 阶段四附加 Task 0.4：``SHELL_CONFIG_JSON`` 从"文件路径"改成了"内容
-本身"——servedBy 外壳没有自己的 component.yaml 之外的任何东西可以挂载
-（brickKit 的 manifest 模型没有 volumes 字段），"文件路径 + 挂载卷"这
-条路在没有 volumes 的世界里走不通。现在这个环境变量的值直接是
-``be-ops shell-config --shell py-render`` 打印出的、这一个外壳自己的
-modules 数组（compact JSON），跟 infra/authz 的 permissionCatalog 是
-同一种模式——写死在 brickkit.yaml 该外壳组件的 config.shellConfigJson
-里，源头数据变了就重新跑一次那条命令、手动贴回去。也因此不再需要
-"按 SHELL_NAME 挑外壳"这一步——内容从生成的那一刻起就已经只属于这一个
-外壳。
+⚠️ 阶段四附加 Task 0.6（brickKit v0.4.2）：``SHELL_CONFIG_JSON`` +
+``be-ops shell-config`` 那一整套"我们自己手工生成、手工贴进
+brickkit.yaml"的机制整个退休——平台原生新增
+``BRICKKIT_SERVED_MEMBERS_CONFIG``，在算 ``BRICKKIT_SERVED_MEMBERS`` 的
+同一处代码里，把每个真的被这个外壳收编的成员的完整装配数据
+（``componentId``/``version``/``httpPort``/``extraPorts``/合并后的
+``config``）直接原生注入，不再需要我们自己起一个命令行工具算一遍、
+brickkit.yaml 一改版本号/config/servedBy 归属就手工维护的数据就会过期
+这整类坑因此从设计上消失（真机复发过两次，见装配仓库
+``docs/dev/架构复盘-servedBy落地后的自有改进空间.md`` 发现二）。也因此
+不再需要按 ``BRICKKIT_SERVED_MEMBERS`` 单独筛一遍——这份新变量本身就
+已经是"这次真的被收编"的成员集合，不是"这个外壳理论上可能收编的全部
+成员"。
+
+⚠️ ``config`` 里的键是原始 configSchema 驼峰 key（brickKit 刻意不做
+大写下划线转换，交给外壳实现者自己处理，见 brickKit 文档
+``shell-implementers-guide`` 原文）——``_config_env_var_name`` 把它转成
+``besdk.Config`` 内部查找用的 ``SCREAMING_SNAKE_CASE``，算法与
+``be-shell-go`` 的 ``configEnvVarName``、brickKit 自己的
+``internal/inject.EnvVarName`` 逐字对应。
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import signal
 from typing import TYPE_CHECKING
 
@@ -54,99 +63,77 @@ _MODULE_REGISTRY: dict[str, "Callable[[Runtime], Awaitable[Module]]"] = {}
 
 def _register_known_modules() -> None:
     """延迟到函数内部 import，不在模块顶层——``app`` 包（infra-print）
-    还没被 be-ops 产出 4 认领为"这个外壳要装的模块"之前，不应该在
-    import 这个文件本身的时候就强制拉起它的依赖链（weasyprint 等）。
-    真的有第二个 Python 组件时，在这里追加一行，不改其余逻辑。
+    还没被平台判定为"这个外壳这次真的要装的模块"之前，不应该在 import
+    这个文件本身的时候就强制拉起它的依赖链（weasyprint 等）。真的有
+    第二个 Python 组件时，在这里追加一行，不改其余逻辑。
     """
     from app.module import create_module as infra_print_create_module
 
     _MODULE_REGISTRY["infra/print"] = infra_print_create_module
 
 
-_VERSIONED_NAME_RE_CHARS = str.maketrans({"/": "-", ".": "-"})
+_ENV_VAR_NAME_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 
-def _versioned_service_name(component_id: str, version: str) -> str:
-    """与 brickKit 自己推导服务名的算法逐字对应（总纲 §2.1："/ → -、
-    . → -、全部小写，再接精确版本号"）——"mdm/customer"@"1.0.7" →
-    "mdm-customer-1-0-7"，跟 ``BRICKKIT_SERVED_MEMBERS`` 里的写法逐字
-    一致。同 ``be-shell-go`` 的 ``versionedServiceName``。
+def _config_env_var_name(key: str) -> str:
+    """把一个原始 configSchema 驼峰 key 转成 ``SCREAMING_SNAKE_CASE``
+    ——跟 ``besdk.Config`` 内部查找配置项时用的转换规则（camelCase →
+    大写下划线）逐字对应，也是 brickKit 自己
+    ``internal/inject.EnvVarName`` 的算法，这里原样复刻（同
+    ``be-shell-go`` 的 ``configEnvVarName``）。
     """
-    return f"{component_id}-{version}".translate(_VERSIONED_NAME_RE_CHARS).lower()
-
-
-def _served_member_set() -> set[str]:
-    """读 ``BRICKKIT_SERVED_MEMBERS``（平台原生注入，servedBy 外壳"这次
-    真的被收编、活着"的成员清单，逗号分隔的版本化服务名）。
-
-    ⚠️ 必须区分"变量不存在"与"变量是空字符串"——不存在意味着这个容器
-    可能不是被 servedBy 正常收编启动的（平台总会至少注入一个空字符串，
-    真的读不到通常说明是手动 docker run 忘了传，必须报错，不能悄悄
-    退化成"全部实例化"这类旧行为）；空字符串是合法状态，意味着这次
-    没有任何成员被收编，应该装出 0 个模块。同 ``be-shell-go`` 的
-    ``servedMemberSet``（Go 用 ``os.LookupEnv``，Python 用
-    ``sentinel not in os.environ`` 达到同样的区分效果）。
-    """
-    if "BRICKKIT_SERVED_MEMBERS" not in os.environ:
-        raise RuntimeError(
-            "BRICKKIT_SERVED_MEMBERS 未设置——这个容器看起来不是被 servedBy 正常收编启动的"
-            "（平台总会至少注入一个空字符串），检查是不是手动 docker run 漏传了这个变量"
-        )
-    raw = os.environ["BRICKKIT_SERVED_MEMBERS"]
-    if not raw:
-        return set()
-    return {name.strip() for name in raw.split(",")}
+    normalized = key.replace("-", "_").replace(".", "_").replace(" ", "_")
+    return _ENV_VAR_NAME_BOUNDARY_RE.sub("_", normalized).upper()
 
 
 def _build_modules() -> list[ModuleSpec]:
-    raw = os.environ.get("SHELL_CONFIG_JSON")
-    if not raw:
+    raw = os.environ.get("BRICKKIT_SERVED_MEMBERS_CONFIG")
+    if raw is None:
         raise RuntimeError(
-            "SHELL_CONFIG_JSON 未设置（be-ops shell-config --shell <name> 的产出，"
-            "应该是这个外壳自己的 modules 数组）"
+            "BRICKKIT_SERVED_MEMBERS_CONFIG 未设置——这个容器看起来不是被 servedBy 正常收编启动的"
+            "（平台总会至少注入一个 [] 空数组），检查是不是手动 docker run 漏传了这个变量"
         )
-    served = _served_member_set()
 
     try:
-        modules = json.loads(raw)
+        members = json.loads(raw)
     except ValueError as exc:
-        raise RuntimeError(f"解析 SHELL_CONFIG_JSON 失败: {exc}") from exc
+        raise RuntimeError(f"解析 BRICKKIT_SERVED_MEMBERS_CONFIG 失败: {exc}") from exc
 
     _register_known_modules()
 
-    matched: set[str] = set()
     specs: list[ModuleSpec] = []
-    for m in modules:
+    for m in members:
         component_id = m["componentId"]
-        name = _versioned_service_name(component_id, m["version"])
-        if name not in served:
-            # SHELL_CONFIG_JSON 列的是"这个外壳理论上有哪些成员"，不是
-            # "这次都被收编了"——没在 BRICKKIT_SERVED_MEMBERS 里的成员
-            # 这次没被平台收编，正常跳过，不是错误。
-            continue
-        matched.add(name)
         new_module = _MODULE_REGISTRY.get(component_id)
         if new_module is None:
             raise RuntimeError(
-                f"组件 {component_id} 在 SHELL_CONFIG_JSON 里，但 _MODULE_REGISTRY 没有登记它的真实 create_module——是不是漏了给它加 import"
+                f"组件 {component_id} 在 BRICKKIT_SERVED_MEMBERS_CONFIG 里，"
+                "但 _MODULE_REGISTRY 没有登记它的真实 create_module——是不是漏了给它加 import"
             )
+
+        config: dict[str, str] = m.get("config") or {}
+        # pgSchema 要在转换成 SCREAMING_SNAKE_CASE 之前，按原始驼峰 key
+        # 取——它是每个组件都有的既定配置项，不是可选字段。
+        schema = config.get("pgSchema", "")
+        if not schema:
+            raise RuntimeError(
+                f"组件 {component_id} 的 config 里没有 pgSchema——"
+                "BRICKKIT_SERVED_MEMBERS_CONFIG 的数据看起来不完整"
+            )
+
+        env = {_config_env_var_name(k): v for k, v in config.items()}
+        extra_ports = {p["name"]: p["port"] for p in (m.get("extraPorts") or [])}
+
         specs.append(
             ModuleSpec(
                 component_id=component_id,
                 component_version=m["version"],
-                env=m.get("config") or {},
+                env=env,
                 http_port=m["httpPort"],
                 new_module=new_module,
-                extra_ports=m.get("extraPorts") or {},
-                schema=m["schema"],
+                extra_ports=extra_ports,
+                schema=schema,
             )
-        )
-
-    missing = served - matched
-    if missing:
-        raise RuntimeError(
-            f"BRICKKIT_SERVED_MEMBERS 里有 SHELL_CONFIG_JSON 找不到的成员：{sorted(missing)}"
-            "（是不是 brickkit.yaml 改完之后忘了重新跑 be-ops shell-config --shell 把新字符串贴回 config.shellConfigJson）"
         )
     return specs
 
@@ -159,15 +146,15 @@ async def _main() -> None:
 
     shell_name = os.environ.get("SHELL_NAME")
     if not shell_name:
-        raise RuntimeError("SHELL_NAME 未设置（py-render，见 shell-compose.yml）")
+        raise RuntimeError("SHELL_NAME 未设置（py-render，component.yaml 的 shellName 项）")
 
     modules = _build_modules()
 
     pg_dsn = besdk.build_pg_dsn("be-shell-python-" + shell_name)
 
     # ⚠️ SHELL_HEALTH_PORT 同 be-shell-go 的既有判据：不是平台注入的
-    # （外壳根本不是 brickKit 组件）——be-ops 产出 8（shell-compose.yml）
-    # 生成时会把这个端口写进 healthcheck 配置，这里只负责读。
+    # （外壳根本不是 brickKit 组件）——外壳自己的 component.yaml 声明这个
+    # 端口，值写在 brickkit.yaml 该外壳组件的 config 块里，这里只负责读。
     health_port = int(os.environ.get("SHELL_HEALTH_PORT", "0")) or 18889
 
     cfg = Config(

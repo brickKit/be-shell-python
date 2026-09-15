@@ -151,20 +151,14 @@ async def test_单模块Start里异常不崩溃整个进程只是优雅退出并
 # 生成阶段就把 *_ENDPOINT 类变量直接合并进外壳容器自己的 os.environ，
 # 本包一启动就已经看得见，_export_dependency_endpoints 函数与这两条
 # 测试一并删除。完整历史留在 README.md，不随代码一起消失。
-
-
-def test_env_with_process_fallback_specific优先于进程环境(monkeypatch: pytest.MonkeyPatch) -> None:
-    """阶段四附加 Task 0.4 真机复现出的秘钥类 configSchema 项
-    （appTokenSigningKeyPem 等）的回归测试：这类值已经被 be-ops 的
-    MergeConfig 整条排除出 SHELL_CONFIG_JSON，必须靠外壳自己进程环境
-    兜底才能到达需要它的模块。
-    """
-    from shell.run import _env_with_process_fallback
-
-    monkeypatch.setenv("FAKE_SHELL_LEVEL_SECRET", "来自外壳自己进程环境的值")
-    monkeypatch.setenv("PG_SCHEMA", "不该被用到——specific 里有同名 key")
-
-    got = _env_with_process_fallback({"PG_SCHEMA": "mdm_customer"})
-
-    assert got["FAKE_SHELL_LEVEL_SECRET"] == "来自外壳自己进程环境的值"
-    assert got["PG_SCHEMA"] == "mdm_customer"
+#
+# ⚠️ 原来这里还有 test_env_with_process_fallback_specific优先于进程环境，
+# 测的是阶段四附加 Task 0.4 真机复现出的秘钥类 configSchema 项
+# （appTokenSigningKeyPem 等）：那时 be-ops 手工生成的 SHELL_CONFIG_JSON
+# 会把这类值整条排除，必须靠外壳自己进程环境兜底才能到达需要它的模块。
+# 阶段四附加 Task 0.6（brickKit v0.4.2）起，平台原生的
+# BRICKKIT_SERVED_MEMBERS_CONFIG 用真正的 JSON 编码正确处理这类值（不会
+# 撑坏 JSON，也不会提交进 git——brickkit.yaml 里仍然是 ``${VAR}`` 占位符，
+# 只有运行时注入的这个环境变量里才是展开后的真实值），
+# _env_with_process_fallback 函数与这条测试一并删除，兜底机制整个不
+# 需要了。

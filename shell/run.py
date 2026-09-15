@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -94,34 +93,6 @@ class _Built:
     mod: "Module"
 
 
-def _env_with_process_fallback(specific: dict[str, str]) -> dict[str, str]:
-    """把外壳自己的进程环境（``os.environ``）当一层兜底，叠加上
-    ``specific``（这个模块自己的、be-ops shell-config 产出的
-    config）——``specific`` 里已经有的 key 优先，兜底层只补
-    ``specific`` 没提供的 key。同 ``be-shell-go`` 的
-    ``envWithProcessFallback``，判断逐一对应。
-
-    存在的理由：``genyaml.MergeConfig``（be-ops 侧）会把整个值是
-    ``${VAR}`` 占位符的 configSchema 项（秘钥类：PEM 私钥、密码、
-    webhook 共享密钥……）整条排除，不让它们进 ``SHELL_CONFIG_JSON``
-    ——真机测过，这类值要么带着真实换行符会破坏 JSON 结构，要么展开
-    后的真实密钥会被提交进 git（阶段四附加 Task 0.4）。这些秘钥因此
-    改成外壳自己 component.yaml 上的独立 configSchema 项，brickKit
-    原生的注入引擎会把它们展开成外壳容器**自己**的进程环境变量——
-    本函数就是把这份"外壳自己才有、只有一个模块真正需要"的数据，
-    兜底传给需要它的那个模块。本仓库目前唯一的模块（``infra-print``）
-    没有这类秘钥，不会真的触发这条路径，但判断必须跟 ``be-shell-go``
-    保持一致，真的有第二个 Python 组件加入 ``py-render`` 且带秘钥类
-    配置项时，这里必须已经是对的。
-
-    安全性同 ``be-shell-go`` 的既有判据：只对本项目已知只会被唯一一个
-    模块使用的 key 有效，新增秘钥前先确认这条前提仍然成立。
-    """
-    out = dict(os.environ)
-    out.update(specific)
-    return out
-
-
 async def run(cfg: Config, stop_event: asyncio.Event | None = None) -> None:
     """装配整个外壳：``bootstrap`` 一次 → 开一个共享连接池/NATS 连接 →
     ``init_shell_authz`` 一次 → 逐个模块调 ``new_module`` → 按同一顺序
@@ -147,11 +118,21 @@ async def run(cfg: Config, stop_event: asyncio.Event | None = None) -> None:
 
     built: list[_Built] = []
     for spec in cfg.modules:
+        # ⚠️ 阶段四附加 Task 0.6（brickKit v0.4.2）：env 直接用 spec.env，
+        # 不再需要一层"外壳自己进程环境兜底"——旧版这里曾经因为 be-ops
+        # 手工生成的 SHELL_CONFIG_JSON 会把整个值是 ``${VAR}`` 占位符的
+        # 密钥类配置项整条排除（真机测过：带原始换行符的 PEM 值直接拼进
+        # JSON 字符串会撑坏 JSON），需要一层兜底从外壳自己的进程环境把
+        # 这几个值补回来。brickKit 原生的 BRICKKIT_SERVED_MEMBERS_CONFIG
+        # 用真正的 JSON 编码正确处理这类值，每个成员自己的 config 里
+        # 已经带着完整的、真实解析过的密钥值——main.py 的 _build_modules
+        # 直接从这份数据里取，不再有"这几个 key 被排除"这回事，也就不
+        # 需要兜底层了。
         rt = besdk.new_shell_runtime(
             ShellModuleConfig(
                 component_id=spec.component_id,
                 component_version=spec.component_version,
-                env=_env_with_process_fallback(spec.env),
+                env=spec.env,
                 http_port=spec.http_port,
                 extra_ports=spec.extra_ports,
             ),

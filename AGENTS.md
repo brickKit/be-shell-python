@@ -7,7 +7,7 @@
 | 仓库名 | `be-shell-python` |
 | 目录 | `shells/python/`（不进 `brickkit.yaml`，不是 brickKit 组件） |
 | 语言 / 框架 | Python 3.12；只依赖 `besdk`（be-sdk-python）、`yoyo-migrations`、`asyncpg`、`nats-py` |
-| 装的模块 | 阶段四：1 个 Python 组件（`infra-print`）——已经真机装进、迁移/健康检查/路由全部验证过；`brickkit.yaml` 已从 `local: true` 全量切到真实 `servedBy`（阶段四附加 Task 0.4，外壳本身也是真实 brickKit 组件，见 `shells/python/deploy/shell/py-render/component.yaml`），见 `README.md` |
+| 装的模块 | 阶段四：1 个 Python 组件（`infra-print`）——已经真机装进、迁移/健康检查/路由全部验证过；`brickkit.yaml` 已从 `local: true` 全量切到真实 `servedBy`（阶段四附加 Task 0.4，外壳本身也是真实 brickKit 组件，见 `shells/python/deploy/shell/py-render/component.yaml`）；`main.py` 解析平台原生注入的 `BRICKKIT_SERVED_MEMBERS_CONFIG`（brickKit v0.4.2 起原生支持，取代了此前 `be-ops shell-config` 手工生成、贴进 `configSchema` 的 `SHELL_CONFIG_JSON`，阶段四附加 Task 0.6），见 `README.md` |
 | 设计真相源 | 《BrickEnterprise 设计书.md》第 13 章（为什么、七条铁律、代价）+ `docs/plans/04-阶段四-做外壳验拆回.md`（本仓库具体要做什么）+ `docs/design/_调研记录/04-阶段四.md`（技术判断的推演过程）+ `shells/go/AGENTS.md`（Go 版对应仓库，判断逻辑逐一对应）——本文件与它们冲突时，以那些为准 |
 
 ## 这个仓库存在的唯一理由
