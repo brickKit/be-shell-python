@@ -58,8 +58,8 @@ def _fake_module_spec(component_id: str, port: int, *, start=None) -> ModuleSpec
     )
 
 
-async def _wait_healthy(port: int) -> None:
-    url = f"http://127.0.0.1:{port}/"
+async def _wait_healthy(port: int, path: str = "/") -> None:
+    url = f"http://127.0.0.1:{port}{path}"
     async with httpx.AsyncClient() as client:
         for _ in range(200):
             try:
@@ -113,7 +113,7 @@ async def test_HealthPort独立于任何模块自己响应() -> None:
     stop_event = asyncio.Event()
 
     run_task = asyncio.create_task(run(cfg, stop_event))
-    await _wait_healthy(health_port)
+    await _wait_healthy(health_port, path="/healthz")
 
     stop_event.set()
     await asyncio.wait_for(run_task, timeout=5)

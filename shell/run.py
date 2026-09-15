@@ -237,12 +237,23 @@ async def _serve_health(port: int, stop_event: asyncio.Event) -> None:
     各的端口和各自的 ``/healthz``，谁的健康检查代表整个容器，平台不知道
     也不会替这个新问题给出答案。这里只答"外壳进程本身活着"，不查任何
     模块、不查任何依赖，同每个模块自己 ``/healthz`` 的既有判据。
+
+    ⚠️ **真机踩到的坑（阶段四附加 Task 0.4，servedBy 真机验证）**：这里
+    必须同 ``besdk.fastapi_app`` 里 ``/healthz`` 的既有判据一样，路径
+    写 ``/healthz``（不是 ``/``，要跟 ``component.yaml`` 的
+    ``healthCheck.path`` 对上）、且显式同时注册 ``@app.get``/``@app.head``
+    两个方法——Starlette 的 ``Route.__init__`` 虽然会给 ``GET`` 自动带上
+    ``HEAD``，但 ``FastAPI.get()`` 走的是自己单独的路径，不会带过来这条
+    自动加线，``brickkit`` 生成的健康检查命令用 ``wget --spider``（发的
+    是 HEAD），只注册 GET 会让每一次探测都 404/405，直接见
+    ``besdk/fastapi_app.py`` 顶部同一个坑的完整记录。
     """
     from fastapi import FastAPI
 
     app = FastAPI()
 
-    @app.get("/")
+    @app.get("/healthz")
+    @app.head("/healthz")
     async def _healthz() -> dict[str, bool]:
         return {"ok": True}
 
