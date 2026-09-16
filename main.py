@@ -30,12 +30,24 @@ brickkit.yaml 一改版本号/config/servedBy 归属就手工维护的数据就�
 已经是"这次真的被收编"的成员集合，不是"这个外壳理论上可能收编的全部
 成员"。
 
-⚠️ ``config`` 里的键是原始 configSchema 驼峰 key（brickKit 刻意不做
-大写下划线转换，交给外壳实现者自己处理，见 brickKit 文档
+⚠️ 阶段四附加 Task 0.6 三度收尾（brickKit v0.4.3）：``config`` 字段
+改名 ``configEnvVars``，语义从"key → 值"变成"key → 外壳进程环境里
+那条独立变量的名字"——真机复现过密钥类 config 值（``${VAR}`` 占位符）
+会被 docker compose 自己的全文本 ``${VAR}`` 替换撑坏 JSON 结构的 bug，
+反馈给 brickKit 之后，v0.4.3 从根上把每个成员自己的每个 config 值改成
+外壳进程环境里一条独立的、带组件 ID 前缀命名的标量变量，不再嵌在 JSON
+字符串内部。``_build_modules`` 因此读 ``configEnvVars[key]`` 拿变量名，
+再 ``os.environ.get`` 去读真正的值——``_sanitize_served_members_config``
+这层下游兜底（v0.3.2 加的）已经整个删除，不再需要。
+
+⚠️ ``configEnvVars`` 的键是原始 configSchema 驼峰 key（brickKit 刻意
+不做大写下划线转换，交给外壳实现者自己处理，见 brickKit 文档
 ``shell-implementers-guide`` 原文）——``_config_env_var_name`` 把它转成
 ``besdk.Config`` 内部查找用的 ``SCREAMING_SNAKE_CASE``，算法与
 ``be-shell-go`` 的 ``configEnvVarName``、brickKit 自己的
-``internal/inject.EnvVarName`` 逐字对应。
+``internal/inject.EnvVarName`` 逐字对应；用途仅限于本文件组装
+``ModuleSpec.env`` 的 key，不用于重新计算 brickKit 已经算好的那条带
+前缀变量名。
 """
 
 from __future__ import annotations
@@ -86,49 +98,6 @@ def _config_env_var_name(key: str) -> str:
     return _ENV_VAR_NAME_BOUNDARY_RE.sub("_", normalized).upper()
 
 
-def _sanitize_served_members_config(raw: str) -> str:
-    """修复 docker compose 自己对 ``${VAR}`` 做全文本替换时、在 JSON
-    字符串内部留下的原始控制字符——判断逐一对应 ``be-shell-go`` 的
-    ``sanitizeServedMembersConfig``。
-
-    真机 ``brickkit up`` 复现出：brickKit 生成 ``BRICKKIT_SERVED_
-    MEMBERS_CONFIG`` 这份 JSON 的那一刻，字符串内部不会有任何未转义的
-    控制字符；但密钥类 config 值在 ``brickkit.yaml`` 里写的是
-    ``${VAR}`` 占位符，docker compose 读取生成好的
-    ``docker-compose.yaml`` 时会对整份文件按纯文本做 ``${VAR}``
-    替换，不知道某个 ``${VAR}`` 恰好嵌在这份 JSON 字符串内部——真实
-    密钥（PEM 私钥）自带原始换行符，替换进去就在"合法 JSON 字符串内部
-    绝不会自己出现"的位置制造出裸控制字符。
-
-    只转义**字符串内部**的控制字符，不能不分场合整段替换——字符串外部
-    的裸换行/空白本来就是合法 JSON，用一个只关心"现在在不在字符串
-    里面"的最小状态机（遇到未转义的 ``"`` 切换状态，``\\`` 时跳过下一个
-    字符防止误判转义序列）来分辨。
-    """
-    out: list[str] = []
-    in_string = False
-    i = 0
-    n = len(raw)
-    while i < n:
-        ch = raw[i]
-        if in_string and ch == "\\" and i + 1 < n:
-            out.append(raw[i : i + 2])
-            i += 2
-            continue
-        if ch == '"':
-            in_string = not in_string
-            out.append(ch)
-            i += 1
-            continue
-        if in_string and ch in ("\n", "\r", "\t"):
-            out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[ch])
-            i += 1
-            continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
-
-
 def _build_modules() -> list[ModuleSpec]:
     raw = os.environ.get("BRICKKIT_SERVED_MEMBERS_CONFIG")
     if raw is None:
@@ -138,7 +107,7 @@ def _build_modules() -> list[ModuleSpec]:
         )
 
     try:
-        members = json.loads(_sanitize_served_members_config(raw))
+        members = json.loads(raw)
     except ValueError as exc:
         raise RuntimeError(f"解析 BRICKKIT_SERVED_MEMBERS_CONFIG 失败: {exc}") from exc
 
@@ -154,17 +123,18 @@ def _build_modules() -> list[ModuleSpec]:
                 "但 _MODULE_REGISTRY 没有登记它的真实 create_module——是不是漏了给它加 import"
             )
 
-        config: dict[str, str] = m.get("config") or {}
+        config_env_vars: dict[str, str] = m.get("configEnvVars") or {}
         # pgSchema 要在转换成 SCREAMING_SNAKE_CASE 之前，按原始驼峰 key
-        # 取——它是每个组件都有的既定配置项，不是可选字段。
-        schema = config.get("pgSchema", "")
+        # 取——它是每个组件都有的既定配置项，不是可选字段。configEnvVars
+        # 给的是变量名，真正的值要再 os.environ.get 一次。
+        schema = os.environ.get(config_env_vars.get("pgSchema", ""), "")
         if not schema:
             raise RuntimeError(
                 f"组件 {component_id} 的 config 里没有 pgSchema——"
                 "BRICKKIT_SERVED_MEMBERS_CONFIG 的数据看起来不完整"
             )
 
-        env = {_config_env_var_name(k): v for k, v in config.items()}
+        env = {_config_env_var_name(k): os.environ.get(var_name, "") for k, var_name in config_env_vars.items()}
         extra_ports = {p["name"]: p["port"] for p in (m.get("extraPorts") or [])}
 
         specs.append(

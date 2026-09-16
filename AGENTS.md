@@ -7,7 +7,7 @@
 | 仓库名 | `be-shell-python` |
 | 目录 | `shells/python/`（不进 `brickkit.yaml`，不是 brickKit 组件） |
 | 语言 / 框架 | Python 3.12；只依赖 `besdk`（be-sdk-python）、`yoyo-migrations`、`asyncpg`、`nats-py` |
-| 装的模块 | 阶段四：1 个 Python 组件（`infra-print`）——已经真机装进、迁移/健康检查/路由全部验证过；`brickkit.yaml` 已从 `local: true` 全量切到真实 `servedBy`（阶段四附加 Task 0.4，外壳本身也是真实 brickKit 组件，见 `shells/python/deploy/shell/py-render/component.yaml`）；`main.py` 解析平台原生注入的 `BRICKKIT_SERVED_MEMBERS_CONFIG`（brickKit v0.4.2 起原生支持，取代了此前 `be-ops shell-config` 手工生成、贴进 `configSchema` 的 `SHELL_CONFIG_JSON`，阶段四附加 Task 0.6），见 `README.md` |
+| 装的模块 | 阶段四：1 个 Python 组件（`infra-print`）——已经真机装进、迁移/健康检查/路由全部验证过；`brickkit.yaml` 已从 `local: true` 全量切到真实 `servedBy`（阶段四附加 Task 0.4，外壳本身也是真实 brickKit 组件，见 `shells/python/deploy/shell/py-render/component.yaml`）；`main.py` 解析平台原生注入的 `BRICKKIT_SERVED_MEMBERS_CONFIG`（brickKit v0.4.2 起原生支持，取代了此前 `be-ops shell-config` 手工生成、贴进 `configSchema` 的 `SHELL_CONFIG_JSON`，阶段四附加 Task 0.6；v0.4.3 起 `config` 字段改名 `configEnvVars`，只携带变量名不携带值，从根上修好了密钥类值撑坏 JSON 的坑），见 `README.md` |
 | 设计真相源 | 《BrickEnterprise 设计书.md》第 13 章（为什么、七条铁律、代价）+ `docs/plans/04-阶段四-做外壳验拆回.md`（本仓库具体要做什么）+ `docs/design/_调研记录/04-阶段四.md`（技术判断的推演过程）+ `shells/go/AGENTS.md`（Go 版对应仓库，判断逻辑逐一对应）——本文件与它们冲突时，以那些为准 |
 
 ## 这个仓库存在的唯一理由
@@ -58,17 +58,17 @@ FIRST_COMPLETED)` + 手动 `stop_event.set()` + 对 pending 任务 `.cancel()`�
   `GET` 请求真的能拿到 `{"ok":true}`。改成普通 `GET`（`wget -q -O /dev/null`）
   解决，见 `infra/shell-compose.yml`。Go 侧的健康检查是裸 `http.HandlerFunc`
   （不区分方法），没有这个问题，但两边判据要保持一致。
-- ⚠️ **`BRICKKIT_SERVED_MEMBERS_CONFIG` 里密钥类的值可能带着裸控制
-  字符**：`be-shell-go` 真机 `brickkit up` 复现出——docker compose 读取
-  生成好的 docker-compose.yaml 时会对整份文件按纯文本做 `${VAR}` 替换，
-  不知道某个 `${VAR}` 恰好嵌在这份 JSON 字符串内部，真实密钥（PEM 私钥）
-  自带原始换行符，替换进去会把 JSON 从中间断开。`main.py` 的
-  `_sanitize_served_members_config` 在 `json.loads` 之前把 JSON 字符串
-  **内部**的裸控制字符转义回合法形式来根治这个问题（普适性修复，不区分
-  是哪个 key）——不是靠"密钥类值另开一条路"这种绕过办法，
-  `_env_with_process_fallback` 已经不需要存在。本仓库目前唯一模块
-  `infra/print` 没有密钥类配置项，不会真的触发，但判断需要跟
-  `be-shell-go` 保持一致。见 `README.md`"Task 0.6"一节的完整时间线。
+- ⚠️ **密钥类 config 值不再经过 JSON 字符串，brickKit v0.4.3 从根上修好了**：
+  `be-shell-go` 真机 `brickkit up` 复现过密钥类 config 值（`${VAR}` 占位符）
+  被 docker compose 自己的全文本 `${VAR}` 替换撑坏 JSON 结构的 bug，反馈
+  给 brickKit 之后，v0.4.3 把 `config` 字段改名 `configEnvVars`（携带
+  变量名而不是值，每个成员自己的每个 config 值改走外壳进程环境里一条
+  独立的、带组件 ID 前缀的标量变量）——本仓库曾经先后加过
+  `_env_with_process_fallback`（v0.3.1）、`_sanitize_served_members_config`
+  （v0.3.2）两层下游兜底，v0.4.3 上线后两层都已经整个删除。本仓库目前
+  唯一模块 `infra/print` 没有密钥类配置项，这个 bug 从没真的在本仓库
+  触发过，但判断需要跟 `be-shell-go` 保持一致。见 `README.md`"Task 0.6"
+  一节的完整时间线。
 
 ## 测试
 

@@ -4,17 +4,21 @@ kind: Component
 metadata:
   id: shell/py-render
   name: Python 外壳（打印渲染域）
-  version: 0.3.2                     # 直接复用 be-shell-python 这个 git 仓库自己的 tag，
+  version: 0.3.3                     # 直接复用 be-shell-python 这个 git 仓库自己的 tag，
                                       # 镜像就是这个 tag 构建出来的（shells/python/Makefile
                                       # 的 image 目标），两者天生一致。v0.3.0：brickKit
                                       # v0.4.2 起原生支持 BRICKKIT_SERVED_MEMBERS_CONFIG，
                                       # shellConfigJson 这个手工维护的 configSchema 项
                                       # 整个退休；v0.3.1/v0.3.2：be-shell-go 那边真机复现
-                                      # + 根治 docker compose 对 `${VAR}` 做全文本替换撑坏
-                                      # BRICKKIT_SERVED_MEMBERS_CONFIG 的 JSON 这个 bug
-                                      # （main.py 新增 `_sanitize_served_members_config`）
-                                      # ——本仓库目前唯一模块 infra/print 没有密钥类配置项，
-                                      # 不会真的触发，但判断需要跟 be-shell-go 保持一致，见
+                                      # + 用下游 sanitizer 临时兜底 docker compose 对
+                                      # `${VAR}` 做全文本替换撑坏 BRICKKIT_SERVED_MEMBERS_
+                                      # CONFIG 的 JSON 这个 bug；v0.3.3：brickKit v0.4.3
+                                      # 从根上修好了这个 bug（config 字段改名
+                                      # configEnvVars，只携带变量名不携带值），
+                                      # `_sanitize_served_members_config` 这层下游兜底
+                                      # 整个删除——本仓库目前唯一模块 infra/print 没有
+                                      # 密钥类配置项，不会真的触发，但判断需要跟
+                                      # be-shell-go 保持一致，见
                                       # docs/plans/04b-验证记录.md Task 0.6
   description: 把 infra/print 合并进一个进程——本身不含任何业务逻辑，纯装配（设计书第 13 章）
   license: Apache-2.0
@@ -51,7 +55,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/be-shell-python:0.3.2
+  image: brickenterprise/be-shell-python:0.3.3
   port: 8402                         # registry/ports.tsv，_shell-py-render 行
   labels:                            # 同 be-shell-go 三个外壳：成员自己的
                                       # prometheus.io/port 已删掉，合并后指标只走外壳

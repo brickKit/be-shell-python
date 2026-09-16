@@ -9,9 +9,14 @@ BRICKKIT_SERVED_MEMBERS 取代它成为"这次谁真的被收编"的数据源。
 阶段四附加 Task 0.6（brickKit v0.4.2）：SHELL_CONFIG_JSON + ``be-ops
 shell-config`` 那一整套机制整体退休，改成解析平台原生注入的
 BRICKKIT_SERVED_MEMBERS_CONFIG——这份数据本身就已经是"这次真的被收编"
-的成员集合（不需要再单独按 BRICKKIT_SERVED_MEMBERS 筛一遍），且
-``config`` 键是原始 configSchema 驼峰 key，需要 ``_config_env_var_name``
-转成 ``SCREAMING_SNAKE_CASE`` 才能被 ``besdk.Config`` 正确查到。
+的成员集合（不需要再单独按 BRICKKIT_SERVED_MEMBERS 筛一遍）。
+
+阶段四附加 Task 0.6 三度收尾（brickKit v0.4.3）：``config`` 字段改名
+``configEnvVars``，语义从"key → 值"变成"key → 外壳进程环境里那条独立
+变量的名字"——下面几条用例的 fixture 因此需要额外 ``monkeypatch.setenv``
+一遍那条被指向的变量。``_config_env_var_name`` 把原始 configSchema
+驼峰 key 转成 ``SCREAMING_SNAKE_CASE`` 才能被 ``besdk.Config`` 正确
+查到，这一步不变。
 """
 
 from __future__ import annotations
@@ -30,6 +35,8 @@ def test_已知的唯一真实组件都在MODULE_REGISTRY里() -> None:
 
 
 def test_解析真实数据形状装配模块(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INFRA_PRINT_AUTHZ_BUNDLE_URL", "http://infra-authz-1-0-7:8223/authz/bundle")
+    monkeypatch.setenv("INFRA_PRINT_PG_SCHEMA", "infra_print")
     monkeypatch.setenv(
         "BRICKKIT_SERVED_MEMBERS_CONFIG",
         json.dumps(
@@ -39,9 +46,9 @@ def test_解析真实数据形状装配模块(monkeypatch: pytest.MonkeyPatch) -
                     "version": "1.0.7",
                     "httpPort": 8400,
                     "extraPorts": [{"name": "grpc", "port": 9400}],
-                    "config": {
-                        "authzBundleUrl": "http://infra-authz-1-0-7:8223/authz/bundle",
-                        "pgSchema": "infra_print",
+                    "configEnvVars": {
+                        "authzBundleUrl": "INFRA_PRINT_AUTHZ_BUNDLE_URL",
+                        "pgSchema": "INFRA_PRINT_PG_SCHEMA",
                     },
                 }
             ]
@@ -90,6 +97,7 @@ def test_不是合法JSON时报错(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_成员在MODULE_REGISTRY里找不到时报错(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HRM_PAYROLL_PG_SCHEMA", "hrm_payroll")
     monkeypatch.setenv(
         "BRICKKIT_SERVED_MEMBERS_CONFIG",
         json.dumps(
@@ -98,7 +106,7 @@ def test_成员在MODULE_REGISTRY里找不到时报错(monkeypatch: pytest.Monke
                     "componentId": "hrm/payroll",
                     "version": "1.0.0",
                     "httpPort": 8090,
-                    "config": {"pgSchema": "hrm_payroll"},
+                    "configEnvVars": {"pgSchema": "HRM_PAYROLL_PG_SCHEMA"},
                 }
             ]
         ),
@@ -110,43 +118,41 @@ def test_成员在MODULE_REGISTRY里找不到时报错(monkeypatch: pytest.Monke
 def test_缺pgSchema时报错(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "BRICKKIT_SERVED_MEMBERS_CONFIG",
-        json.dumps([{"componentId": "infra/print", "version": "1.0.7", "httpPort": 8400, "config": {}}]),
+        json.dumps([{"componentId": "infra/print", "version": "1.0.7", "httpPort": 8400, "configEnvVars": {}}]),
     )
     with pytest.raises(RuntimeError, match="pgSchema"):
         main._build_modules()
 
 
-def test_docker_compose对VAR占位符做全文本替换撑坏JSON时能自愈(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_密钥类值真的带换行符也能正确流转(monkeypatch: pytest.MonkeyPatch) -> None:
     """判断逐一对应 ``be-shell-go`` 的
-    ``TestBuildModules_docker_compose对VAR占位符做全文本替换撑坏JSON时能自愈``
-    ——真机 ``brickkit up`` 复现出的真实 bug：docker compose 对整份生成好
-    的 docker-compose.yaml 按纯文本做 ``${VAR}`` 替换，会把真实密钥的原始
-    换行符直接拼进本该是单行 JSON 的字符串里、撑坏 JSON。本仓库目前唯一
-    模块（infra/print）没有密钥类配置项，不会真的触发，但判断需要跟
-    be-shell-go 保持一致。
+    ``TestBuildModules_密钥类值真的带换行符也能正确流转``——brickKit
+    v0.4.3 起密钥类值完全不经过 JSON 字符串，只是外壳进程环境里一条
+    普通的环境变量，``os.environ.get`` 原样读回来，不需要任何转义/
+    反转义。本仓库目前唯一模块（infra/print）没有密钥类配置项，这条
+    用例纯粹是为了判断跟 be-shell-go 保持一致。
     """
-    broken = (
-        '[{"componentId":"infra/print","version":"1.0.7","httpPort":8400,'
-        '"config":{"pgSchema":"infra_print","someSecret":"-----BEGIN KEY-----\n'
-        "line-two\n-----END KEY-----\"}}]"
+    pem = "-----BEGIN KEY-----\nline-two\n-----END KEY-----"
+    monkeypatch.setenv("INFRA_PRINT_SOME_SECRET", pem)
+    monkeypatch.setenv("INFRA_PRINT_PG_SCHEMA", "infra_print")
+    monkeypatch.setenv(
+        "BRICKKIT_SERVED_MEMBERS_CONFIG",
+        json.dumps(
+            [
+                {
+                    "componentId": "infra/print",
+                    "version": "1.0.7",
+                    "httpPort": 8400,
+                    "configEnvVars": {"pgSchema": "INFRA_PRINT_PG_SCHEMA", "someSecret": "INFRA_PRINT_SOME_SECRET"},
+                }
+            ]
+        ),
     )
-    monkeypatch.setenv("BRICKKIT_SERVED_MEMBERS_CONFIG", broken)
 
     specs = main._build_modules()
 
     assert len(specs) == 1
-    assert specs[0].env["SOME_SECRET"] == "-----BEGIN KEY-----\nline-two\n-----END KEY-----"
-
-
-def test_sanitize_served_members_config只转义字符串内部的裸控制字符() -> None:
-    """单独钉住最容易出错的两个边界：字符串外部的裸换行（纯格式化空白）
-    不能被误伤；字符串内部已转义的双引号不能扰乱状态机。"""
-    raw = '[\n  {"a":"line1\nline2","b":"has \\"quote\\" then\ttab"}\n]'
-
-    got = json.loads(main._sanitize_served_members_config(raw))
-
-    assert got[0]["a"] == "line1\nline2"
-    assert got[0]["b"] == 'has "quote" then\ttab'
+    assert specs[0].env["SOME_SECRET"] == pem
 
 
 @pytest.mark.parametrize(

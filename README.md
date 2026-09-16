@@ -185,3 +185,27 @@ JSON 字符串内部本来就不可能出现裸控制字符，见到了就一定
 compose 的全文本 `${VAR}` 替换不知道自己在 JSON 字符串内部），本仓库这边的
 `_sanitize_served_members_config` 只是下游兜底，已写成反馈文档给 brickKit。
 真机复核结果见父仓库 `docs/plans/04b-验证记录.md` Task 0.6。
+
+## 现状补充（阶段四附加 Task 0.6 三度收尾，2026-09-16）——brickKit v0.4.3 从根上修好，`_sanitize_served_members_config` 整个删除
+
+判断逐一对应 `be-shell-go` 同一次改动：brickKit 看完反馈文档后没有直接
+采纳我们提的两个方向，换了一个从根上消除整类问题的设计发回来请我们
+评审，确认可以接受后 v0.4.3 上线——`BRICKKIT_SERVED_MEMBERS_CONFIG` 的
+`config` 字段改名 `configEnvVars`，语义从"key → 值"变成"key → 外壳
+进程环境里那条独立变量的名字"。每个成员自己的每个 config 值，各自生成
+一条独立的、`{EnvPrefix(componentId)}_{EnvVarName(key)}` 命名的标量
+环境变量（跟 `*_ENDPOINT` 同一套前缀算法、同一套碰撞检测），`${VAR}`
+占位符语义完全不变，继续交给 docker compose 自己展开——不再嵌在任何
+结构化字符串内部。
+
+v0.4.3 上线当天完成迁移：`main.py` 的 `_build_modules` 从直接读
+`config[key]` 的值，改成读 `configEnvVars[key]` 拿变量名、再
+`os.environ.get` 去读真正的值；`_sanitize_served_members_config`（连同
+它的回归测试）整个删除——这层下游兜底彻底不需要了，因为 JSON 里已经
+不可能再出现任何可能是 `${VAR}` 的用户可控文本。`_config_env_var_name`
+函数保留，但用途收窄成"给本文件自己组装 `ModuleSpec.env` 的 key"，不再
+用于重新计算 brickKit 已经算好的那条带前缀变量名。
+
+新增 `test_密钥类值真的带换行符也能正确流转`，判断逐一对应
+`be-shell-go` 的同名测试。全部 17 条测试通过。真机验证与 brickKit
+源码核查过程见父仓库 `docs/plans/04b-验证记录.md` Task 0.6。
