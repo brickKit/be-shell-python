@@ -88,7 +88,7 @@ brickKit 新增了 `servedBy` 机制之后，上面 Task 9 那条 `_export_depen
 实例化，改成额外按平台原生注入的 `BRICKKIT_SERVED_MEMBERS`（这次真的被收编、活着的成员，逗号分隔的
 版本化服务名）筛一遍，判断逐一对应 `be-shell-go` 的 `buildModules`。每个模块自己的 `configSchema`
 解析结果（原来 `SHELL_ENV_JSON` 的 `env` 字段）也一并挪进了 `SHELL_CONFIG_JSON` 新增的 `config` 字段
-（`be-ops` 侧的完整调研过程见装配仓库 `docs/plans/04b-验证记录.md` Task 0.2）。
+（`be-ops` 侧的完整调研过程见装配仓库 `docs/plans/05a-迁移到servedBy.md` Task 0.2）。
 
 ## 现状补充（阶段四附加 Task 0.4 完成，2026-09-15）——SHELL_CONFIG_JSON 从"文件路径"改成"内容本身"
 
@@ -98,7 +98,7 @@ crash-loop（`SHELL_CONFIG_JSON` 未设置）——根因是 brickKit 的 manife
 打印出的、这一个外壳自己的 `modules` 数组（compact JSON），跟 `infra/authz` 的 `permissionCatalog`
 是同一种模式，写死在 `brickkit.yaml` 的 `config.shellConfigJson` 里。`_build_modules` 因此不再接收
 `shell_name` 参数——内容从生成的那一刻起就已经只属于这一个外壳。完整过程与真机复核结果见装配仓库
-`docs/plans/04b-验证记录.md` Task 0.4。
+`docs/plans/05a-迁移到servedBy.md` Task 0.4。
 
 ## 现状补充（阶段四 Task 8 完成，2026-09-13）
 
@@ -140,7 +140,7 @@ Docker 判定成 unhealthy——即使进程本身完全正常、`GET` 请求真
   configSchema 项——`be-ops shell-config` 子命令、`SHELL_CONFIG_JSON` 手工维护
   这条线已经没有存在的理由。
 
-真机复核结果见父仓库 `docs/plans/04b-验证记录.md` Task 0.6。
+真机复核结果见父仓库 `docs/plans/05a-迁移到servedBy.md` Task 0.6。
 
 ## 现状补充（阶段四附加 Task 0.6 修补，2026-09-15）——`_env_with_process_fallback` 恢复
 
@@ -158,7 +158,7 @@ docker compose 自己读取生成好的 docker-compose.yaml 时**——它对整
 重新跟 `be-shell-go` 保持一致。本仓库目前唯一模块（`infra/print`）没有密钥类
 配置项，这个 bug 不会真的在本仓库触发，恢复纯粹是为了保持两个外壳仓库的判断
 逐一对应——真的有第二个 Python 组件带密钥类配置项加入 `py-render` 时，这里
-必须已经是对的。真机复核结果见父仓库 `docs/plans/04b-验证记录.md` Task 0.6。
+必须已经是对的。真机复核结果见父仓库 `docs/plans/05a-迁移到servedBy.md` Task 0.6。
 
 ## 现状补充（阶段四附加 Task 0.6 根治，2026-09-15）——上一节的修补方向站不住脚，真正的修复是 `_sanitize_served_members_config`
 
@@ -184,7 +184,7 @@ JSON 字符串内部本来就不可能出现裸控制字符，见到了就一定
 这仍然是 `BRICKKIT_SERVED_MEMBERS_CONFIG` 机制本身的普适性设计缺口（docker
 compose 的全文本 `${VAR}` 替换不知道自己在 JSON 字符串内部），本仓库这边的
 `_sanitize_served_members_config` 只是下游兜底，已写成反馈文档给 brickKit。
-真机复核结果见父仓库 `docs/plans/04b-验证记录.md` Task 0.6。
+真机复核结果见父仓库 `docs/plans/05a-迁移到servedBy.md` Task 0.6。
 
 ## 现状补充（阶段四附加 Task 0.6 三度收尾，2026-09-16）——brickKit v0.4.3 从根上修好，`_sanitize_served_members_config` 整个删除
 
@@ -208,4 +208,4 @@ v0.4.3 上线当天完成迁移：`main.py` 的 `_build_modules` 从直接读
 
 新增 `test_密钥类值真的带换行符也能正确流转`，判断逐一对应
 `be-shell-go` 的同名测试。全部 17 条测试通过。真机验证与 brickKit
-源码核查过程见父仓库 `docs/plans/04b-验证记录.md` Task 0.6。
+源码核查过程见父仓库 `docs/plans/05a-迁移到servedBy.md` Task 0.6。
