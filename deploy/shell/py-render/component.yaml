@@ -4,7 +4,7 @@ kind: Component
 metadata:
   id: shell/py-render
   name: Python 外壳（打印渲染域）
-  version: 0.3.3                     # 直接复用 be-shell-python 这个 git 仓库自己的 tag，
+  version: 0.3.5                     # 直接复用 be-shell-python 这个 git 仓库自己的 tag，
                                       # 镜像就是这个 tag 构建出来的（shells/python/Makefile
                                       # 的 image 目标），两者天生一致。v0.3.0：brickKit
                                       # v0.4.2 起原生支持 BRICKKIT_SERVED_MEMBERS_CONFIG，
@@ -19,7 +19,13 @@ metadata:
                                       # 整个删除——本仓库目前唯一模块 infra/print 没有
                                       # 密钥类配置项，不会真的触发，但判断需要跟
                                       # be-shell-go 保持一致，见
-                                      # docs/plans/04b-验证记录.md Task 0.6
+                                      # docs/plans/04b-验证记录.md Task 0.6；v0.3.5：补打
+                                      # 上一版漏掉的 tag（docs 链接修复）+ infra-print 依赖
+                                      # 同步到 v1.0.8（scripts/seed.sh 改用共享库
+                                      # infra/scripts/lib/seed-net.sh，不涉及 backend/
+                                      # 代码），同步更新下面 deployment.image 的镜像 tag（同
+                                      # be-shell-go v0.5.6 踩过的坑：两个字段各自独立，
+                                      # 必须一起改）
   description: 把 infra/print 合并进一个进程——本身不含任何业务逻辑，纯装配（设计书第 13 章）
   license: Apache-2.0
   vendor: brickKit
@@ -55,7 +61,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/be-shell-python:0.3.3
+  image: brickenterprise/be-shell-python:0.3.5
   port: 8402                         # registry/ports.tsv，_shell-py-render 行
   labels:                            # 同 be-shell-go 三个外壳：成员自己的
                                       # prometheus.io/port 已删掉，合并后指标只走外壳
