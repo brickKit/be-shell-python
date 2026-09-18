@@ -15,7 +15,10 @@ dependencies = [
     # 要重新核对的地方。v1.0.5：infra-print 自己的 besdk 依赖从 v0.3.1
     # 升到 v0.3.3，跟本仓库对齐（两边 git URL 依赖里的 besdk tag 必须
     # 完全一致，pip/uv 才能解析出一份，见这次真机撞到的冲突）。
-    "infra-print @ git+https://github.com/brickKit/infra-print.git@v1.0.5",
+    # v1.0.8：跟进 infra-print 的 scripts/seed.sh 改成 source 共享库
+    # infra/scripts/lib/seed-net.sh（装配仓库开发工具改动，不涉及本组件
+    # backend/ 任何代码），纯版本号同步，无破坏性变更。
+    "infra-print @ git+https://github.com/brickKit/infra-print.git@v1.0.8",
 ]
 
 [project.optional-dependencies]
